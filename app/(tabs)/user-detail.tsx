@@ -85,7 +85,7 @@ export default function UserDetailScreen() {
     return (
       <SafeAreaView style={styles.container} edges={["top"]}>
         <View style={styles.header}>
-          <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
+          <TouchableOpacity onPress={() => { if (router.canGoBack()) router.back(); }} style={styles.backButton}>
             <IconSymbol size={24} name="chevron.left" color="white" />
           </TouchableOpacity>
           <Text style={styles.headerTitle}>Contact</Text>
@@ -102,7 +102,7 @@ export default function UserDetailScreen() {
     return (
       <SafeAreaView style={styles.container} edges={["top"]}>
         <View style={styles.header}>
-          <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
+          <TouchableOpacity onPress={() => { if (router.canGoBack()) router.back(); }} style={styles.backButton}>
             <IconSymbol size={24} name="chevron.left" color="white" />
           </TouchableOpacity>
           <Text style={styles.headerTitle}>Contact</Text>
@@ -125,7 +125,7 @@ export default function UserDetailScreen() {
   return (
     <SafeAreaView style={styles.container} edges={["top"]}>
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
+        <TouchableOpacity onPress={() => { if (router.canGoBack()) router.back(); }} style={styles.backButton}>
           <IconSymbol size={24} name="chevron.left" color="white" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Contact</Text>

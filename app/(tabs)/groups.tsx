@@ -1,6 +1,7 @@
 import React, { useCallback, useMemo, useState } from 'react';
 import {
     ActivityIndicator,
+    Alert,
     Modal,
     RefreshControl,
     ScrollView,
@@ -16,6 +17,7 @@ import { IconSymbol } from '@/components/ui/icon-symbol';
 import { api } from '@/services/api';
 import { useSession } from '@/ctx';
 import { CreateGroupForm } from '@/components/groups/CreateGroupForm';
+import { EditGroupForm } from '@/components/groups/EditGroupForm';
 
 type Group = {
     id: string;
@@ -31,17 +33,59 @@ export default function GroupsScreen() {
     const currentUser = session ? JSON.parse(session) : null;
 
     const [groups, setGroups] = useState<Group[]>([]);
-    const [usersById, setUsersById] = useState<Record<string, { id: string; name: string }>>({});
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
     const [isCreateModalVisible, setIsCreateModalVisible] = useState(false);
+    const [isEditModalVisible, setIsEditModalVisible] = useState(false);
+    const [editingGroup, setEditingGroup] = useState<Group | null>(null);
+    const [deletingGroupId, setDeletingGroupId] = useState<string | null>(null);
+    const [groupBalances, setGroupBalances] = useState<Record<string, { pay: number; get: number }>>({});
+
+    const calculateExpenseImpact = useCallback((expense: any) => {
+        const splitBetween = expense.splitBetween || [];
+        const splitDetails = expense.splitDetails || [];
+        const isPaidByMe = expense.paidBy === currentUser?.id;
+        const isInSplit = splitBetween.includes(currentUser?.id);
+        let pay = 0;
+        let get = 0;
+
+        if (isPaidByMe) {
+            if (expense.splitType === 'EQUAL') {
+                const count = splitBetween.length;
+                if (count > 0) {
+                    const share = expense.amount / count;
+                    get += isInSplit ? share * (count - 1) : expense.amount;
+                }
+            } else {
+                splitDetails.forEach((detail: any) => {
+                    if (detail.userId !== currentUser?.id) {
+                        get += detail.amount || 0;
+                    }
+                });
+            }
+        } else if (isInSplit) {
+            if (expense.splitType === 'EQUAL') {
+                const count = splitBetween.length;
+                if (count > 0) {
+                    pay += expense.amount / count;
+                }
+            } else {
+                const myDetail = splitDetails.find((detail: any) => detail.userId === currentUser?.id);
+                if (myDetail) {
+                    pay += myDetail.amount || 0;
+                }
+            }
+        }
+
+        return { pay, get };
+    }, [currentUser?.id]);
 
     const fetchData = useCallback(async (showLoading = true) => {
         if (showLoading) setLoading(true);
 
-        const [groupsResult, usersResult] = await Promise.all([
+        const [groupsResult, expensesResult] = await Promise.all([
             api.getGroups(currentUser?.id),
-            api.getUsers(),
+            api.getExpenses(currentUser?.id),
         ]);
 
         if (groupsResult.success) {
@@ -51,16 +95,27 @@ export default function GroupsScreen() {
             setGroups(sortedGroups);
         }
 
-        if (usersResult.success) {
-            const map: Record<string, { id: string; name: string }> = {};
-            usersResult.data.forEach((user: { id: string; name: string }) => {
-                map[user.id] = user;
+        if (groupsResult.success && expensesResult.success) {
+            const balances: Record<string, { pay: number; get: number }> = {};
+            (groupsResult.data as Group[]).forEach(group => {
+                balances[group.id] = { pay: 0, get: 0 };
             });
-            setUsersById(map);
+
+            expensesResult.data.forEach((expense: any) => {
+                if (!expense.groupId || !balances[expense.groupId]) {
+                    return;
+                }
+
+                const impact = calculateExpenseImpact(expense);
+                balances[expense.groupId].pay += impact.pay;
+                balances[expense.groupId].get += impact.get;
+            });
+
+            setGroupBalances(balances);
         }
 
         if (showLoading) setLoading(false);
-    }, [currentUser?.id]);
+    }, [calculateExpenseImpact, currentUser?.id]);
 
     useFocusEffect(
         useCallback(() => {
@@ -76,31 +131,64 @@ export default function GroupsScreen() {
 
     const formattedGroups = useMemo(() => {
         return groups.map(group => {
-            const memberNames = group.members
-                .map(memberId => usersById[memberId]?.name)
-                .filter(Boolean);
-
             return {
                 ...group,
                 memberCount: group.members.length,
-                memberNames,
-                createdLabel: new Date(group.createdAt).toLocaleDateString('en-US', {
-                    month: 'short',
-                    day: 'numeric',
-                    year: 'numeric',
-                }),
+                pay: groupBalances[group.id]?.pay || 0,
+                get: groupBalances[group.id]?.get || 0,
             };
         });
-    }, [groups, usersById]);
+    }, [groupBalances, groups]);
+
+    const handleDeleteGroup = useCallback((group: Group) => {
+        Alert.alert(
+            'Delete Group',
+            `Delete "${group.name}" and all expenses in this group?`,
+            [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                    text: 'Delete',
+                    style: 'destructive',
+                    onPress: async () => {
+                        if (!currentUser?.id) {
+                            Alert.alert('Error', 'Session expired. Please login again.');
+                            return;
+                        }
+                        setDeletingGroupId(group.id);
+                        const result = await api.deleteGroup(group.id, currentUser?.id);
+                        setDeletingGroupId(null);
+
+                        if (result.success) {
+                            setGroups(prev => prev.filter(item => item.id !== group.id));
+                            Alert.alert('Deleted', 'Group deleted successfully');
+                            return;
+                        }
+
+                        Alert.alert('Error', result.message || 'Failed to delete group');
+                    },
+                },
+            ]
+        );
+    }, [currentUser?.id]);
+
+    const handleOpenEditGroup = useCallback((group: Group) => {
+        setEditingGroup(group);
+        setIsEditModalVisible(true);
+    }, []);
 
     return (
         <SafeAreaView style={styles.container} edges={['top']}>
             <StatusBar barStyle="light-content" />
 
             <View style={styles.header}>
-                <View>
-                    <Text style={styles.headerTitle}>Groups</Text>
-                    <Text style={styles.headerSubtitle}>Manage your split groups</Text>
+                <View style={styles.headerLeft}>
+                    <TouchableOpacity onPress={() => router.replace('/(tabs)')} style={styles.backButton}>
+                        <IconSymbol size={20} name="chevron.left" color="white" />
+                    </TouchableOpacity>
+                    <View>
+                        <Text style={styles.headerTitle}>Groups</Text>
+                        <Text style={styles.headerSubtitle}>Manage your split groups</Text>
+                    </View>
                 </View>
                 <TouchableOpacity style={styles.createHeaderButton} onPress={() => setIsCreateModalVisible(true)}>
                     <IconSymbol size={20} name="plus" color="white" />
@@ -115,22 +203,25 @@ export default function GroupsScreen() {
                     <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#FF8C69']} />
                 }
             >
-                <TouchableOpacity style={styles.createCard} onPress={() => setIsCreateModalVisible(true)}>
-                    <View style={styles.createCardIcon}>
-                        <IconSymbol size={22} name="person.3.fill" color="#FF8C69" />
-                    </View>
-                    <View style={{ flex: 1 }}>
-                        <Text style={styles.createCardTitle}>Create New Group</Text>
-                        <Text style={styles.createCardSub}>Tap to add a group without leaving this screen.</Text>
-                    </View>
-                    <IconSymbol size={18} name="chevron.right" color="#FF8C69" />
-                </TouchableOpacity>
-
                 {loading ? (
                     <ActivityIndicator size="small" color="#FF8C69" style={{ marginTop: 24 }} />
                 ) : formattedGroups.length > 0 ? (
                     formattedGroups.map(group => (
-                        <View key={group.id} style={styles.groupCard}>
+                        <TouchableOpacity
+                            key={group.id}
+                            style={styles.groupCard}
+                            activeOpacity={0.8}
+                            onPress={() =>
+                                router.push({
+                                    pathname: '/(tabs)/group-expenses',
+                                    params: {
+                                        groupId: group.id,
+                                        groupName: group.name,
+                                        groupMembers: group.members.join(','),
+                                    },
+                                })
+                            }
+                        >
                             <View style={styles.groupTopRow}>
                                 <Text style={styles.groupName}>{group.name}</Text>
                                 <View style={styles.memberCountPill}>
@@ -138,29 +229,60 @@ export default function GroupsScreen() {
                                     <Text style={styles.memberCountText}>{group.memberCount}</Text>
                                 </View>
                             </View>
-                            <Text style={styles.createdAt}>Created {group.createdLabel}</Text>
-                            <Text style={styles.membersLabel} numberOfLines={2}>
-                                {group.memberNames.join(', ')}
-                            </Text>
+                            <View style={styles.balanceRow}>
+                                <View style={styles.payPill}>
+                                    <Text style={styles.payLabel}>Pay</Text>
+                                    <Text style={styles.payValue}>₹{group.pay.toFixed(2)}</Text>
+                                </View>
+                                <View style={styles.getPill}>
+                                    <Text style={styles.getLabel}>Get</Text>
+                                    <Text style={styles.getValue}>₹{group.get.toFixed(2)}</Text>
+                                </View>
+                            </View>
                             <View style={styles.groupActions}>
                                 <TouchableOpacity
+                                    style={styles.editGroupButton}
+                                    onPress={(event) => {
+                                        event.stopPropagation();
+                                        handleOpenEditGroup(group);
+                                    }}
+                                >
+                                    <Text style={styles.editGroupButtonText}>Edit</Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity
+                                    style={[styles.deleteGroupButton, deletingGroupId === group.id && styles.disabledButton]}
+                                    onPress={(event) => {
+                                        event.stopPropagation();
+                                        handleDeleteGroup(group);
+                                    }}
+                                    disabled={deletingGroupId === group.id}
+                                >
+                                    {deletingGroupId === group.id ? (
+                                        <ActivityIndicator size="small" color="#D9534F" />
+                                    ) : (
+                                        <Text style={styles.deleteGroupButtonText}>Delete</Text>
+                                    )}
+                                </TouchableOpacity>
+                                <TouchableOpacity
                                     style={styles.addExpenseButton}
-                                    onPress={() =>
+                                    onPress={(event) => {
+                                        event.stopPropagation();
                                         router.push({
                                             pathname: '/(tabs)/add',
                                             params: {
+                                                source: 'group',
                                                 groupId: group.id,
                                                 groupName: group.name,
                                                 groupMembers: group.members.join(','),
                                             },
-                                        })
-                                    }
+                                        });
+                                    }}
                                 >
                                     <IconSymbol size={14} name="plus.circle.fill" color="white" />
                                     <Text style={styles.addExpenseButtonText}>Add Expense</Text>
                                 </TouchableOpacity>
                             </View>
-                        </View>
+                        </TouchableOpacity>
                     ))
                 ) : (
                     <View style={styles.emptyState}>
@@ -194,6 +316,47 @@ export default function GroupsScreen() {
                     </View>
                 </View>
             </Modal>
+
+            <Modal
+                visible={isEditModalVisible}
+                animationType="slide"
+                transparent={true}
+                onRequestClose={() => {
+                    setIsEditModalVisible(false);
+                    setEditingGroup(null);
+                }}
+            >
+                <View style={styles.modalOverlay}>
+                    <View style={styles.modalContent}>
+                        <View style={styles.modalHeader}>
+                            <Text style={styles.modalTitle}>Edit Group</Text>
+                            <TouchableOpacity
+                                style={styles.modalClose}
+                                onPress={() => {
+                                    setIsEditModalVisible(false);
+                                    setEditingGroup(null);
+                                }}
+                            >
+                                <IconSymbol size={20} name="xmark" color="#1E1E1E" />
+                            </TouchableOpacity>
+                        </View>
+                        {editingGroup ? (
+                            <EditGroupForm
+                                group={editingGroup}
+                                onCancel={() => {
+                                    setIsEditModalVisible(false);
+                                    setEditingGroup(null);
+                                }}
+                                onSuccess={() => {
+                                    setIsEditModalVisible(false);
+                                    setEditingGroup(null);
+                                    fetchData(false);
+                                }}
+                            />
+                        ) : null}
+                    </View>
+                </View>
+            </Modal>
         </SafeAreaView>
     );
 }
@@ -209,6 +372,19 @@ const styles = StyleSheet.create({
         paddingBottom: 16,
         flexDirection: 'row',
         justifyContent: 'space-between',
+        alignItems: 'center',
+    },
+    headerLeft: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 10,
+    },
+    backButton: {
+        width: 40,
+        height: 40,
+        borderRadius: 20,
+        backgroundColor: 'rgba(255,255,255,0.22)',
+        justifyContent: 'center',
         alignItems: 'center',
     },
     headerTitle: {
@@ -236,35 +412,6 @@ const styles = StyleSheet.create({
         borderTopRightRadius: 32,
         paddingHorizontal: 20,
         paddingTop: 22,
-    },
-    createCard: {
-        backgroundColor: 'white',
-        borderRadius: 18,
-        borderWidth: 1,
-        borderColor: '#FFE5DB',
-        padding: 16,
-        flexDirection: 'row',
-        alignItems: 'center',
-        marginBottom: 16,
-    },
-    createCardIcon: {
-        width: 44,
-        height: 44,
-        borderRadius: 22,
-        backgroundColor: '#FFF0ED',
-        justifyContent: 'center',
-        alignItems: 'center',
-        marginRight: 12,
-    },
-    createCardTitle: {
-        fontSize: 16,
-        fontWeight: '700',
-        color: '#1E1E1E',
-    },
-    createCardSub: {
-        fontSize: 12,
-        color: '#888',
-        marginTop: 2,
     },
     groupCard: {
         backgroundColor: 'white',
@@ -298,20 +445,84 @@ const styles = StyleSheet.create({
         fontSize: 12,
         fontWeight: '700',
     },
-    createdAt: {
-        fontSize: 12,
-        color: '#888',
-        marginTop: 8,
+    balanceRow: {
+        marginTop: 10,
+        flexDirection: 'row',
+        gap: 10,
     },
-    membersLabel: {
-        fontSize: 13,
-        color: '#555',
-        marginTop: 8,
+    payPill: {
+        flex: 1,
+        backgroundColor: '#FFF3F3',
+        borderRadius: 12,
+        paddingHorizontal: 10,
+        paddingVertical: 8,
+    },
+    getPill: {
+        flex: 1,
+        backgroundColor: '#EEF9EE',
+        borderRadius: 12,
+        paddingHorizontal: 10,
+        paddingVertical: 8,
+    },
+    payLabel: {
+        color: '#D9534F',
+        fontSize: 12,
+        fontWeight: '600',
+    },
+    getLabel: {
+        color: '#2E7D32',
+        fontSize: 12,
+        fontWeight: '600',
+    },
+    payValue: {
+        marginTop: 2,
+        color: '#D9534F',
+        fontSize: 14,
+        fontWeight: '700',
+    },
+    getValue: {
+        marginTop: 2,
+        color: '#2E7D32',
+        fontSize: 14,
+        fontWeight: '700',
     },
     groupActions: {
         marginTop: 14,
         flexDirection: 'row',
         justifyContent: 'flex-end',
+        gap: 8,
+    },
+    deleteGroupButton: {
+        borderColor: '#FFD9D7',
+        borderWidth: 1,
+        borderRadius: 12,
+        paddingHorizontal: 12,
+        paddingVertical: 8,
+        backgroundColor: '#FFF5F5',
+        alignItems: 'center',
+        justifyContent: 'center',
+        minWidth: 76,
+    },
+    editGroupButton: {
+        borderColor: '#FFE6D9',
+        borderWidth: 1,
+        borderRadius: 12,
+        paddingHorizontal: 12,
+        paddingVertical: 8,
+        backgroundColor: '#FFF8F3',
+        alignItems: 'center',
+        justifyContent: 'center',
+        minWidth: 64,
+    },
+    editGroupButtonText: {
+        color: '#FF8C69',
+        fontSize: 13,
+        fontWeight: '700',
+    },
+    deleteGroupButtonText: {
+        color: '#D9534F',
+        fontSize: 13,
+        fontWeight: '700',
     },
     addExpenseButton: {
         backgroundColor: '#FF8C69',
@@ -326,6 +537,9 @@ const styles = StyleSheet.create({
         color: 'white',
         fontSize: 13,
         fontWeight: '700',
+    },
+    disabledButton: {
+        opacity: 0.7,
     },
     emptyState: {
         marginTop: 40,

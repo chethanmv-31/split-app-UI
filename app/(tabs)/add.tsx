@@ -15,7 +15,8 @@ export default function AddScreen() {
     const { session } = useSession();
     const router = useRouter();
     const currentUser = session ? JSON.parse(session) : null;
-    const { groupId, groupName, groupMembers } = useLocalSearchParams<{
+    const { source, groupId, groupName, groupMembers } = useLocalSearchParams<{
+        source?: string | string[];
         groupId?: string | string[];
         groupName?: string | string[];
         groupMembers?: string | string[];
@@ -39,10 +40,11 @@ export default function AddScreen() {
     const scrollViewRef = useRef<ScrollView>(null);
     const [splitSectionY, setSplitSectionY] = useState(0);
 
+    const parsedSource = Array.isArray(source) ? source[0] : source;
     const parsedGroupId = Array.isArray(groupId) ? groupId[0] : groupId;
     const parsedGroupName = Array.isArray(groupName) ? groupName[0] : groupName;
     const parsedGroupMembers = Array.isArray(groupMembers) ? groupMembers[0] : groupMembers;
-    const isGroupExpense = Boolean(parsedGroupId);
+    const isGroupExpense = parsedSource === 'group' && Boolean(parsedGroupId);
     const groupMemberIds = useMemo(
         () =>
             (parsedGroupMembers || '')
@@ -61,6 +63,27 @@ export default function AddScreen() {
         }
         return Array.from(ids);
     }, [isGroupExpense, groupMemberIds, currentUser?.id]);
+
+    const handleBackPress = useCallback(() => {
+        if (isGroupExpense && parsedGroupId) {
+            router.replace({
+                pathname: '/(tabs)/group-expenses',
+                params: {
+                    groupId: parsedGroupId,
+                    groupName: parsedGroupName,
+                    groupMembers: parsedGroupMembers,
+                },
+            });
+            return;
+        }
+
+        if (router.canGoBack()) {
+            router.back();
+            return;
+        }
+
+        router.replace('/(tabs)');
+    }, [isGroupExpense, parsedGroupId, parsedGroupMembers, parsedGroupName, router]);
 
     const resetForm = useCallback(() => {
         setTitle('');
@@ -247,7 +270,23 @@ export default function AddScreen() {
         if (result.success) {
             setLoading(false);
             Alert.alert('Success', 'Expense added successfully', [
-                { text: 'OK', onPress: () => router.replace(isGroupExpense ? '/(tabs)/groups' : '/(tabs)') }
+                {
+                    text: 'OK',
+                    onPress: () => {
+                        if (isGroupExpense && parsedGroupId) {
+                            router.replace({
+                                pathname: '/(tabs)/group-expenses',
+                                params: {
+                                    groupId: parsedGroupId,
+                                    groupName: parsedGroupName,
+                                    groupMembers: parsedGroupMembers,
+                                },
+                            });
+                            return;
+                        }
+                        router.replace('/(tabs)');
+                    },
+                }
             ]);
             resetForm();
         } else {
@@ -260,7 +299,7 @@ export default function AddScreen() {
         <SafeAreaView style={styles.container} edges={['top']}>
             <StatusBar barStyle="light-content" />
             <View style={styles.header}>
-                <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
+                <TouchableOpacity onPress={handleBackPress} style={styles.backButton}>
                     <IconSymbol size={24} name="chevron.left" color="white" />
                 </TouchableOpacity>
                 <Text style={styles.headerTitle}>

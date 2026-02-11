@@ -44,11 +44,31 @@ export default function TabLayout() {
           href: null,
         }}
       />
+      <Tabs.Screen
+        name="group-expenses"
+        options={{
+          href: null,
+          tabBarStyle: { display: "none" },
+        }}
+      />
+      <Tabs.Screen
+        name="groups"
+        options={{
+          title: "Groups",
+          href: "/(tabs)/groups",
+          tabBarStyle: { display: "none" },
+          tabBarIcon: ({ color }) => (
+            <IconSymbol size={28} name="person.3.fill" color={color} />
+          ),
+        }}
+      />
       {/* Middle Button Placeholder */}
       <Tabs.Screen
         name="add"
         options={{
           title: "Add",
+          href: "/(tabs)/add",
+          tabBarStyle: { display: "none" },
           tabBarIcon: () => (
             <View
               style={{
@@ -67,16 +87,6 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
-        name="groups"
-        options={{
-          title: "Groups",
-          href: "/(tabs)/groups",
-          tabBarIcon: ({ color }) => (
-            <IconSymbol size={28} name="person.3.fill" color={color} />
-          ),
-        }}
-      />
-      <Tabs.Screen
         name="user-detail"
         options={{
           href: null,
@@ -89,6 +99,15 @@ export default function TabLayout() {
           title: "History",
           tabBarIcon: ({ color }) => (
             <IconSymbol size={28} name="clock.fill" color={color} />
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="analytics"
+        options={{
+          title: "Analytics",
+          tabBarIcon: ({ color }) => (
+            <IconSymbol size={28} name="chart.bar.fill" color={color} />
           ),
         }}
       />

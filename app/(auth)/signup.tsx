@@ -51,7 +51,7 @@ export default function SignUp() {
                 style={{ flex: 1 }}
             >
                 <ScrollView contentContainerStyle={styles.scrollContent}>
-                    <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
+                    <TouchableOpacity onPress={() => { if (router.canGoBack()) router.back(); }} style={styles.backButton}>
                         <Text style={styles.backButtonText}>← Back</Text>
                     </TouchableOpacity>
 
@@ -115,7 +115,7 @@ export default function SignUp() {
 
                         <View style={styles.footer}>
                             <Text style={styles.footerText}>Already have an account? </Text>
-                            <TouchableOpacity onPress={() => router.back()}>
+                            <TouchableOpacity onPress={() => { if (router.canGoBack()) router.back(); }}>
                                 <Text style={styles.link}>Login</Text>
                             </TouchableOpacity>
                         </View>
