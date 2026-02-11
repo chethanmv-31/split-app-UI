@@ -196,9 +196,13 @@ export const api = {
         }
     },
 
-    async getExpenses(userId?: string) {
+    async getExpenses(userId?: string, groupId?: string) {
         try {
-            const url = userId ? `${API_URL}/expenses?userId=${userId}` : `${API_URL}/expenses`;
+            const params = new URLSearchParams();
+            if (userId) params.set('userId', userId);
+            if (groupId) params.set('groupId', groupId);
+            const query = params.toString();
+            const url = `${API_URL}/expenses${query ? `?${query}` : ''}`;
             const response = await fetch(url);
             if (!response.ok) {
                 throw new Error('Failed to fetch expenses');
@@ -243,6 +247,51 @@ export const api = {
             return { success: true, data: await response.json() };
         } catch (error: any) {
             console.error('Invite user error:', error);
+            return { success: false, message: error.message || 'Network error' };
+        }
+    },
+    async createGroup(groupData: { name: string; createdBy: string; members: string[]; invitedUsers?: Array<{ name: string; mobile?: string }> }) {
+        try {
+            const url = `${API_URL}/groups`;
+            const response = await fetch(url, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(groupData),
+            });
+
+            if (!response.ok) {
+                let errorMessage = 'Failed to create group';
+                try {
+                    const errorData = await response.json();
+                    if (typeof errorData?.message === 'string') {
+                        errorMessage = errorData.message;
+                    } else if (Array.isArray(errorData?.message) && errorData.message.length > 0) {
+                        errorMessage = String(errorData.message[0]);
+                    }
+                } catch {
+                    // Ignore JSON parse errors and use fallback message.
+                }
+                throw new Error(errorMessage);
+            }
+
+            return { success: true, data: await response.json() };
+        } catch (error: any) {
+            console.error('Create group error:', error);
+            return { success: false, message: error.message || 'Network error' };
+        }
+    },
+    async getGroups(userId?: string) {
+        try {
+            const url = userId ? `${API_URL}/groups?userId=${userId}` : `${API_URL}/groups`;
+            const response = await fetch(url);
+            if (!response.ok) {
+                throw new Error('Failed to fetch groups');
+            }
+            return { success: true, data: await response.json() };
+        } catch (error: any) {
+            console.error('Get groups error:', error);
             return { success: false, message: error.message || 'Network error' };
         }
     }

@@ -41,10 +41,7 @@ export default function TabLayout() {
       <Tabs.Screen
         name="expense-detail"
         options={{
-          title: "Expenses",
-          tabBarIcon: ({ color }) => (
-            <IconSymbol size={28} name="dollarsign.circle.fill" color={color} />
-          ),
+          href: null,
         }}
       />
       {/* Middle Button Placeholder */}
@@ -70,12 +67,19 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
+        name="groups"
+        options={{
+          title: "Groups",
+          href: "/(tabs)/groups",
+          tabBarIcon: ({ color }) => (
+            <IconSymbol size={28} name="person.3.fill" color={color} />
+          ),
+        }}
+      />
+      <Tabs.Screen
         name="user-detail"
         options={{
-          title: "Users",
-          tabBarIcon: ({ color }) => (
-            <IconSymbol size={28} name="person.fill" color={color} />
-          ),
+          href: null,
         }}
       />
 
