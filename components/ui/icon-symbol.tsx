@@ -17,6 +17,7 @@ const MAPPING = {
   'house.fill': 'home',
   'plus': 'add',
   'clock.fill': 'schedule',
+  'chart.bar.fill': 'bar-chart',
   'person.fill': 'person',
   'dollarsign.circle.fill': 'attach-money',
   'paperplane.fill': 'send',

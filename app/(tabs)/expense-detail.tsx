@@ -8,16 +8,49 @@ import { useSession } from '../../ctx';
 
 export default function ExpenseDetailScreen() {
   const router = useRouter();
-  const { expenseId } = useLocalSearchParams();
+  const {
+    expenseId,
+    returnToGroupId,
+    returnToGroupName,
+    returnToGroupMembers
+  } = useLocalSearchParams<{
+    expenseId?: string | string[];
+    returnToGroupId?: string | string[];
+    returnToGroupName?: string | string[];
+    returnToGroupMembers?: string | string[];
+  }>();
   const { session } = useSession();
   const currentUser = session ? JSON.parse(session) : null;
   const [expense, setExpense] = useState<any>(null);
   const [users, setUsers] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
+  const parsedExpenseId = Array.isArray(expenseId) ? expenseId[0] : expenseId;
+  const parsedReturnToGroupId = Array.isArray(returnToGroupId) ? returnToGroupId[0] : returnToGroupId;
+  const parsedReturnToGroupName = Array.isArray(returnToGroupName) ? returnToGroupName[0] : returnToGroupName;
+  const parsedReturnToGroupMembers = Array.isArray(returnToGroupMembers) ? returnToGroupMembers[0] : returnToGroupMembers;
+
   useEffect(() => {
     fetchExpenseDetails();
-  }, [expenseId]);
+  }, [parsedExpenseId]);
+
+  const handleBack = () => {
+    if (parsedReturnToGroupId) {
+      router.replace({
+        pathname: '/(tabs)/group-expenses',
+        params: {
+          groupId: parsedReturnToGroupId,
+          groupName: parsedReturnToGroupName,
+          groupMembers: parsedReturnToGroupMembers,
+        },
+      });
+      return;
+    }
+
+    if (router.canGoBack()) {
+      router.back();
+    }
+  };
 
   const fetchExpenseDetails = async () => {
     try {
@@ -27,7 +60,7 @@ export default function ExpenseDetailScreen() {
       ]);
 
       if (expensesRes.success && usersRes.success) {
-        const foundExpense = expensesRes.data.find((e: any) => e.id === expenseId);
+        const foundExpense = expensesRes.data.find((e: any) => e.id === parsedExpenseId);
         if (foundExpense) {
           setExpense(foundExpense);
           setUsers(usersRes.data);
@@ -88,7 +121,7 @@ export default function ExpenseDetailScreen() {
       <SafeAreaView style={styles.container} edges={['top']}>
         <StatusBar barStyle="light-content" />
         <View style={styles.header}>
-          <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
+          <TouchableOpacity onPress={handleBack} style={styles.backButton}>
             <IconSymbol size={24} name="chevron.left" color="white" />
           </TouchableOpacity>
           <Text style={styles.headerTitle}>Expense Details</Text>
@@ -106,7 +139,7 @@ export default function ExpenseDetailScreen() {
       <SafeAreaView style={styles.container} edges={['top']}>
         <StatusBar barStyle="light-content" />
         <View style={styles.header}>
-          <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
+          <TouchableOpacity onPress={handleBack} style={styles.backButton}>
             <IconSymbol size={24} name="chevron.left" color="white" />
           </TouchableOpacity>
           <Text style={styles.headerTitle}>Expense Details</Text>
@@ -127,7 +160,7 @@ export default function ExpenseDetailScreen() {
       <StatusBar barStyle="light-content" />
       
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
+        <TouchableOpacity onPress={handleBack} style={styles.backButton}>
           <IconSymbol size={24} name="chevron.left" color="white" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Expense Details</Text>

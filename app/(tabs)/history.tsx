@@ -13,6 +13,7 @@ export default function HistoryScreen() {
     const { session, addNotification, notifications, hasNotifications } = useSession();
     const currentUser = session ? JSON.parse(session) : null;
     const [expenses, setExpenses] = useState<any[]>([]);
+    const [groupsById, setGroupsById] = useState<Record<string, string>>({});
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
     const [currentToast, setCurrentToast] = useState<string | null>(null);
@@ -51,11 +52,27 @@ export default function HistoryScreen() {
         }
     }, [currentUser?.id, addNotification]);
 
+    const fetchGroups = useCallback(async () => {
+        try {
+            const result = await api.getGroups(currentUser?.id);
+            if (result.success) {
+                const map = (result.data || []).reduce((acc: Record<string, string>, group: any) => {
+                    if (group?.id && group?.name) {
+                        acc[group.id] = group.name;
+                    }
+                    return acc;
+                }, {});
+                setGroupsById(map);
+            }
+        } catch (error) {
+            console.error('Error fetching groups:', error);
+        }
+    }, [currentUser?.id]);
     const fetchData = useCallback(async (showLoading = true) => {
         if (showLoading) setLoading(true);
-        await fetchExpenses();
+        await Promise.all([fetchExpenses(), fetchGroups()]);
         setLoading(false);
-    }, [fetchExpenses]);
+    }, [fetchExpenses, fetchGroups]);
 
     useFocusEffect(
         useCallback(() => {
@@ -152,6 +169,7 @@ export default function HistoryScreen() {
                                     avatarGroup={(expense.splitBetween || []).map((id: string) => `https://i.pravatar.cc/150?u=${id}`)}
                                     icon={theme.icon}
                                     iconBackgroundColor={theme.color}
+                                    groupName={expense.groupId ? groupsById[expense.groupId] : undefined}
                                     onPress={() => router.push({
                                         pathname: '/(tabs)/expense-detail',
                                         params: { expenseId: expense.id }
@@ -204,3 +222,4 @@ const styles = StyleSheet.create({
         minHeight: '100%',
     },
 });
+

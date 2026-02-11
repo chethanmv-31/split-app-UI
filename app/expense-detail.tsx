@@ -88,7 +88,7 @@ export default function ExpenseDetailScreen() {
       <SafeAreaView style={styles.container} edges={['top']}>
         <StatusBar barStyle="light-content" />
         <View style={styles.header}>
-          <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
+          <TouchableOpacity onPress={() => { if (router.canGoBack()) router.back(); }} style={styles.backButton}>
             <IconSymbol size={24} name="chevron.left" color="white" />
           </TouchableOpacity>
           <Text style={styles.headerTitle}>Expense Details</Text>
@@ -106,7 +106,7 @@ export default function ExpenseDetailScreen() {
       <SafeAreaView style={styles.container} edges={['top']}>
         <StatusBar barStyle="light-content" />
         <View style={styles.header}>
-          <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
+          <TouchableOpacity onPress={() => { if (router.canGoBack()) router.back(); }} style={styles.backButton}>
             <IconSymbol size={24} name="chevron.left" color="white" />
           </TouchableOpacity>
           <Text style={styles.headerTitle}>Expense Details</Text>
@@ -127,7 +127,7 @@ export default function ExpenseDetailScreen() {
       <StatusBar barStyle="light-content" />
       
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
+        <TouchableOpacity onPress={() => { if (router.canGoBack()) router.back(); }} style={styles.backButton}>
           <IconSymbol size={24} name="chevron.left" color="white" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Expense Details</Text>

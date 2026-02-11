@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { View, Text, StyleSheet, TextInput, TouchableOpacity, ScrollView, Alert, ActivityIndicator, StatusBar, Platform, KeyboardAvoidingView } from 'react-native';
 import { useSession } from '../../ctx';
 import { api } from '../../services/api';
@@ -15,6 +15,12 @@ export default function AddScreen() {
     const { session } = useSession();
     const router = useRouter();
     const currentUser = session ? JSON.parse(session) : null;
+    const { source, groupId, groupName, groupMembers } = useLocalSearchParams<{
+        source?: string | string[];
+        groupId?: string | string[];
+        groupName?: string | string[];
+        groupMembers?: string | string[];
+    }>();
     const { contacts, hasPermission } = useContacts();
 
     const [title, setTitle] = useState('');
@@ -34,6 +40,51 @@ export default function AddScreen() {
     const scrollViewRef = useRef<ScrollView>(null);
     const [splitSectionY, setSplitSectionY] = useState(0);
 
+    const parsedSource = Array.isArray(source) ? source[0] : source;
+    const parsedGroupId = Array.isArray(groupId) ? groupId[0] : groupId;
+    const parsedGroupName = Array.isArray(groupName) ? groupName[0] : groupName;
+    const parsedGroupMembers = Array.isArray(groupMembers) ? groupMembers[0] : groupMembers;
+    const isGroupExpense = parsedSource === 'group' && Boolean(parsedGroupId);
+    const groupMemberIds = useMemo(
+        () =>
+            (parsedGroupMembers || '')
+                .split(',')
+                .map((id) => id.trim())
+                .filter(Boolean),
+        [parsedGroupMembers]
+    );
+    const defaultSelectedUsers = useMemo(() => {
+        if (!isGroupExpense) {
+            return currentUser?.id ? [currentUser.id] : [];
+        }
+        const ids = new Set(groupMemberIds);
+        if (currentUser?.id) {
+            ids.add(currentUser.id);
+        }
+        return Array.from(ids);
+    }, [isGroupExpense, groupMemberIds, currentUser?.id]);
+
+    const handleBackPress = useCallback(() => {
+        if (isGroupExpense && parsedGroupId) {
+            router.replace({
+                pathname: '/(tabs)/group-expenses',
+                params: {
+                    groupId: parsedGroupId,
+                    groupName: parsedGroupName,
+                    groupMembers: parsedGroupMembers,
+                },
+            });
+            return;
+        }
+
+        if (router.canGoBack()) {
+            router.back();
+            return;
+        }
+
+        router.replace('/(tabs)');
+    }, [isGroupExpense, parsedGroupId, parsedGroupMembers, parsedGroupName, router]);
+
     const resetForm = useCallback(() => {
         setTitle('');
         setAmount('');
@@ -42,11 +93,12 @@ export default function AddScreen() {
         setIndividualAmounts({});
         setIsPayerDropdownOpen(false);
         setSearchQuery('');
+        setInvitedUsersMap({});
         if (currentUser?.id) {
             setPaidBy(currentUser.id);
-            setSelectedUsers([currentUser.id]);
+            setSelectedUsers(defaultSelectedUsers);
         }
-    }, [currentUser?.id]);
+    }, [currentUser?.id, defaultSelectedUsers]);
 
     useFocusEffect(
         useCallback(() => {
@@ -73,7 +125,11 @@ export default function AddScreen() {
         const result = await api.getUsers();
         if (result.success) {
             setAllUsers(result.data);
-            setUsers(result.data.filter((u: any) => u.id !== currentUser?.id));
+            const groupMembersSet = new Set(defaultSelectedUsers);
+            const filteredUsers = result.data.filter(
+                (u: any) => u.id !== currentUser?.id && (!isGroupExpense || groupMembersSet.has(u.id))
+            );
+            setUsers(filteredUsers);
         }
     };
 
@@ -111,6 +167,11 @@ export default function AddScreen() {
     };
 
     const handleInviteUser = async (contactName?: string, contactPhone?: string) => {
+        if (isGroupExpense) {
+            Alert.alert('Group Expense', 'Only group members can be part of this expense.');
+            return;
+        }
+
         const name = contactName || searchQuery.trim();
         const phone = contactPhone;
 
@@ -188,8 +249,12 @@ export default function AddScreen() {
             splitBetween,
         };
 
+        if (isGroupExpense && parsedGroupId) {
+            expenseData.groupId = parsedGroupId;
+        }
+
         // Include invited users data
-        if (Object.keys(invitedUsersMap).length > 0) {
+        if (!isGroupExpense && Object.keys(invitedUsersMap).length > 0) {
             expenseData.invitedUsers = Object.values(invitedUsersMap);
         }
 
@@ -201,12 +266,27 @@ export default function AddScreen() {
         }
 
         const result = await api.addExpense(expenseData, currentUser?.id);
-        setLoading(true); // Wait for alert to finish
 
         if (result.success) {
             setLoading(false);
             Alert.alert('Success', 'Expense added successfully', [
-                { text: 'OK', onPress: () => router.replace('/(tabs)') }
+                {
+                    text: 'OK',
+                    onPress: () => {
+                        if (isGroupExpense && parsedGroupId) {
+                            router.replace({
+                                pathname: '/(tabs)/group-expenses',
+                                params: {
+                                    groupId: parsedGroupId,
+                                    groupName: parsedGroupName,
+                                    groupMembers: parsedGroupMembers,
+                                },
+                            });
+                            return;
+                        }
+                        router.replace('/(tabs)');
+                    },
+                }
             ]);
             resetForm();
         } else {
@@ -219,11 +299,13 @@ export default function AddScreen() {
         <SafeAreaView style={styles.container} edges={['top']}>
             <StatusBar barStyle="light-content" />
             <View style={styles.header}>
-                <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
+                <TouchableOpacity onPress={handleBackPress} style={styles.backButton}>
                     <IconSymbol size={24} name="chevron.left" color="white" />
                 </TouchableOpacity>
-                <Text style={styles.headerTitle}>Add Expense</Text>
-                <View style={{ width: 40 }} />
+                <Text style={styles.headerTitle}>
+                    {isGroupExpense ? `Add ${parsedGroupName || 'Group'} Expense` : 'Add Expense'}
+                </Text>
+                <View style={styles.headerSpacer} />
             </View>
 
             <KeyboardAvoidingView
@@ -293,7 +375,7 @@ export default function AddScreen() {
                         <IconSymbol size={18} name="magnifyingglass" color="#999" style={styles.searchIcon} />
                         <TextInput
                             style={styles.searchInput}
-                            placeholder="Search by name or mobile..."
+                            placeholder={isGroupExpense ? 'Search group members...' : 'Search by name or mobile...'}
                             value={searchQuery}
                             onChangeText={setSearchQuery}
                             placeholderTextColor="#999"
@@ -316,21 +398,23 @@ export default function AddScreen() {
                         {[
                             currentUser,
                             ...users,
-                            ...(searchQuery.length > 0 ? contacts.filter(contact =>
+                            ...(!isGroupExpense && searchQuery.length > 0 ? contacts.filter(contact =>
                                 !allUsers.some(u => normalizePhone(u.mobile) === normalizePhone(contact.phoneNumber)) &&
                                 (contact.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
                                     (contact.phoneNumber && contact.phoneNumber.includes(searchQuery)))
                             ) : [])
                         ]
-                            .filter(u => u && (
-                                u.id === currentUser?.id ||
-                                selectedUsers.includes(u.id) ||
-                                (searchQuery.length > 0 && (
+                            .filter(u => {
+                                if (!u) return false;
+
+                                const isContact = Boolean((u as any).isContact);
+                                if (!isContact) return true;
+
+                                return searchQuery.length > 0 && (
                                     u.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                                    (u.mobile && u.mobile.includes(searchQuery)) ||
                                     ((u as any).phoneNumber && (u as any).phoneNumber.includes(searchQuery))
-                                ))
-                            ))
+                                );
+                            })
                             .map((user) => {
                                 const isMainUser = user.id === currentUser?.id;
                                 const isSelected = selectedUsers.includes(user.id);
@@ -393,7 +477,8 @@ export default function AddScreen() {
                                 );
                             })}
 
-                        {searchQuery.length > 2 &&
+                        {!isGroupExpense &&
+                            searchQuery.length > 2 &&
                             !users.some(u => u.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
                                 (u.mobile && u.mobile.includes(searchQuery))) &&
                             !contacts.some(c => c.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -545,6 +630,10 @@ const styles = StyleSheet.create({
         backgroundColor: 'rgba(255,255,255,0.2)',
         justifyContent: 'center',
         alignItems: 'center',
+    },
+    headerSpacer: {
+        width: 40,
+        height: 40,
     },
     headerTitle: {
         fontSize: 20,

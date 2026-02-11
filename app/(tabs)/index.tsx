@@ -18,6 +18,7 @@ export default function HomeScreen() {
   const currentUser = session ? JSON.parse(session) : null;
   const [users, setUsers] = useState<any[]>([]);
   const [expenses, setExpenses] = useState<any[]>([]);
+  const [groupsById, setGroupsById] = useState<Record<string, string>>({});
   const [summary, setSummary] = useState({ youOwe: 0, owesYou: 0 });
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -69,11 +70,27 @@ export default function HomeScreen() {
     }
   }, [currentUser?.id, addNotification]);
 
+  const fetchGroups = useCallback(async () => {
+    try {
+      const result = await api.getGroups(currentUser?.id);
+      if (result.success) {
+        const map = (result.data || []).reduce((acc: Record<string, string>, group: any) => {
+          if (group?.id && group?.name) {
+            acc[group.id] = group.name;
+          }
+          return acc;
+        }, {});
+        setGroupsById(map);
+      }
+    } catch (error) {
+      console.error('Error fetching groups:', error);
+    }
+  }, [currentUser?.id]);
   const fetchData = useCallback(async (showLoading = true) => {
     if (showLoading) setLoading(true);
-    await Promise.all([fetchUsers(), fetchExpenses()]);
+    await Promise.all([fetchUsers(), fetchExpenses(), fetchGroups()]);
     setLoading(false);
-  }, [fetchUsers, fetchExpenses]);
+  }, [fetchUsers, fetchExpenses, fetchGroups]);
 
   useFocusEffect(
     useCallback(() => {
@@ -225,7 +242,7 @@ export default function HomeScreen() {
                   isOwed={isOwed}
                   avatarGroup={(expense.splitBetween || []).map((id: string) => `https://i.pravatar.cc/150?u=${id}`)}
                   icon={icon}
-                  iconBackgroundColor={theme.color}
+                  groupName={expense.groupId ? groupsById[expense.groupId] : undefined}
                   isHighlight={isNew && hasNotifications}
                   onPress={() => router.push({
                     pathname: '/(tabs)/expense-detail',
@@ -329,3 +346,8 @@ const styles = StyleSheet.create({
     minHeight: 400,
   },
 });
+
+
+
+
+

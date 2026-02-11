@@ -11,13 +11,14 @@ interface BillItemProps {
     icon: string; // URL or local asset for the bill icon
     iconBackgroundColor?: string;
     isHighlight?: boolean;
+    groupName?: string;
     onPress?: () => void;
 }
 
-export function BillItem({ title, date, totalAmount, userAmount, isOwed, avatarGroup, icon, iconBackgroundColor = '#E0F7FA', isHighlight, onPress }: BillItemProps) {
+export function BillItem({ title, date, totalAmount, userAmount, isOwed, avatarGroup, icon, iconBackgroundColor = '#E0F7FA', isHighlight, groupName, onPress }: BillItemProps) {
     return (
-        <TouchableOpacity 
-            style={[styles.container, isHighlight && styles.highlightContainer]} 
+        <TouchableOpacity
+            style={[styles.container, isHighlight && styles.highlightContainer]}
             onPress={onPress}
             activeOpacity={0.7}
         >
@@ -35,7 +36,14 @@ export function BillItem({ title, date, totalAmount, userAmount, isOwed, avatarG
                                 </View>
                             )}
                         </View>
-                        <Text style={styles.date}>{date}</Text>
+                        <View style={styles.metaRow}>
+                            <Text style={styles.date}>{date}</Text>
+                            {groupName ? (
+                                <View style={styles.groupBadge}>
+                                    <Text style={styles.groupBadgeText}>{groupName}</Text>
+                                </View>
+                            ) : null}
+                        </View>
                     </View>
                 </View>
                 <Text style={styles.totalAmount}>{totalAmount}</Text>
@@ -102,10 +110,27 @@ const styles = StyleSheet.create({
         fontWeight: '600',
         color: '#1E1E1E',
     },
+    metaRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginTop: 2,
+        gap: 6,
+    },
     date: {
         fontSize: 12,
         color: '#888',
-        marginTop: 2,
+    },
+    groupBadge: {
+        backgroundColor: '#F2F4F7',
+        borderRadius: 10,
+        paddingHorizontal: 8,
+        paddingVertical: 2,
+        maxWidth: 160,
+    },
+    groupBadgeText: {
+        fontSize: 10,
+        color: '#5F6672',
+        fontWeight: '600',
     },
     totalAmount: {
         fontSize: 18,
