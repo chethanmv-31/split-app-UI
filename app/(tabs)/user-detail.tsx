@@ -134,7 +134,7 @@ export default function UserDetailScreen() {
 
       <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
         <View style={styles.mainCard}>
-          <Image source={{ uri: `https://i.pravatar.cc/150?u=${user.id}` }} style={styles.avatarLarge} />
+          <Image source={{ uri: user.avatar || `https://i.pravatar.cc/150?u=${user.id}` }} style={styles.avatarLarge} />
           <Text style={styles.userName}>{user.name}</Text>
           <Text style={styles.userPhone}>{user.mobile || ''}</Text>
           <Text style={styles.netLabel}>Net balance</Text>

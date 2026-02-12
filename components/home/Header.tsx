@@ -1,13 +1,40 @@
 import React from 'react';
-import { View, Text, StyleSheet, Image, Platform, TouchableOpacity, Alert } from 'react-native';
+import { View, Text, StyleSheet, Image, Platform, TouchableOpacity } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import { useSession } from '@/ctx';
 import { NotificationsModal } from './NotificationsModal';
+import { useRouter } from 'expo-router';
 
 export function Header() {
-    const { signOut, hasNotifications, clearNotifications } = useSession();
+    const { session, signOut, hasNotifications } = useSession();
+    const router = useRouter();
     const [modalVisible, setModalVisible] = React.useState(false);
+    const [isProfileMenuVisible, setIsProfileMenuVisible] = React.useState(false);
+
+    const user = React.useMemo(() => {
+        if (!session) return null;
+        try {
+            return JSON.parse(session);
+        } catch {
+            return null;
+        }
+    }, [session]);
+
+    const avatarSource = React.useMemo(
+        () => ({ uri: user?.avatar || `https://i.pravatar.cc/150?u=${user?.id ?? 'guest'}` }),
+        [user?.avatar, user?.id]
+    );
+
+    const handleViewProfile = () => {
+        setIsProfileMenuVisible(false);
+        router.push('/(tabs)/profile');
+    };
+
+    const handleLogout = () => {
+        setIsProfileMenuVisible(false);
+        signOut();
+    };
+
     return (
         <View style={styles.container}>
             {/* Logo Area */}
@@ -23,22 +50,33 @@ export function Header() {
             <View style={styles.actionsContainer}>
                 <TouchableOpacity
                     style={styles.notificationButton}
-                    onPress={() => setModalVisible(true)}
+                    onPress={() => {
+                        setIsProfileMenuVisible(false);
+                        setModalVisible(true);
+                    }}
                 >
                     <Ionicons name="notifications" size={20} color="#FF8C69" />
                     {hasNotifications && <View style={styles.badge} />}
                 </TouchableOpacity>
-                <TouchableOpacity onPress={() => {
-                    Alert.alert('Logout', 'Are you sure you want to logout?', [
-                        { text: 'Cancel', style: 'cancel' },
-                        { text: 'Logout', style: 'destructive', onPress: signOut }
-                    ]);
-                }}>
-                    <Image
-                        source={{ uri: 'https://i.pravatar.cc/150?u=a042581f4e29026704d' }}
-                        style={styles.avatar}
-                    />
-                </TouchableOpacity>
+                <View style={styles.profileMenuContainer}>
+                    <TouchableOpacity onPress={() => setIsProfileMenuVisible((prev) => !prev)}>
+                        <Image
+                            source={avatarSource}
+                            style={styles.avatar}
+                            fadeDuration={0}
+                        />
+                    </TouchableOpacity>
+                    {isProfileMenuVisible && (
+                        <View style={styles.profileMenu}>
+                            <TouchableOpacity style={styles.menuItem} onPress={handleViewProfile}>
+                                <Text style={styles.menuItemText}>View Profile</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity style={styles.menuItem} onPress={handleLogout}>
+                                <Text style={[styles.menuItemText, styles.logoutText]}>Logout</Text>
+                            </TouchableOpacity>
+                        </View>
+                    )}
+                </View>
             </View>
 
             <NotificationsModal
@@ -92,6 +130,7 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         gap: 12,
+        position: 'relative',
     },
     notificationButton: {
         width: 40,
@@ -118,5 +157,32 @@ const styles = StyleSheet.create({
         backgroundColor: '#FF5252',
         borderWidth: 2,
         borderColor: '#1E1E1E',
+    },
+    profileMenuContainer: {
+        position: 'relative',
+    },
+    profileMenu: {
+        position: 'absolute',
+        top: 48,
+        right: 0,
+        minWidth: 140,
+        borderRadius: 10,
+        backgroundColor: 'white',
+        overflow: 'hidden',
+        borderWidth: 1,
+        borderColor: '#EEE',
+        zIndex: 10,
+    },
+    menuItem: {
+        paddingVertical: 10,
+        paddingHorizontal: 12,
+    },
+    menuItemText: {
+        fontSize: 14,
+        color: '#222',
+        fontWeight: '600',
+    },
+    logoutText: {
+        color: '#D93025',
     },
 });

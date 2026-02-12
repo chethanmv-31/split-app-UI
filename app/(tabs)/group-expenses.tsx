@@ -48,6 +48,7 @@ export default function GroupExpensesScreen() {
 
     const [expenses, setExpenses] = useState<any[]>([]);
     const [usersById, setUsersById] = useState<Record<string, string>>({});
+    const [userAvatarsById, setUserAvatarsById] = useState<Record<string, string>>({});
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
     const [activeTab, setActiveTab] = useState<'expenses' | 'balances' | 'analytics'>('expenses');
@@ -80,6 +81,10 @@ export default function GroupExpensesScreen() {
         const date = new Date(dateStr);
         return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
     };
+
+    const getUserAvatar = useCallback((userId: string) => {
+        return userAvatarsById[userId] || `https://i.pravatar.cc/150?u=${userId}`;
+    }, [userAvatarsById]);
 
     const calculateExpenseImpact = useCallback((expense: any) => {
         const splitBetween = expense.splitBetween || [];
@@ -298,7 +303,14 @@ export default function GroupExpensesScreen() {
                 acc[user.id] = user.name;
                 return acc;
             }, {});
+            const mappedAvatars = usersResult.data.reduce((acc: Record<string, string>, user: any) => {
+                if (typeof user.avatar === 'string' && user.avatar.trim()) {
+                    acc[user.id] = user.avatar.trim();
+                }
+                return acc;
+            }, {});
             setUsersById(mappedUsers);
+            setUserAvatarsById(mappedAvatars);
         }
 
         if (showLoading) setLoading(false);
@@ -449,7 +461,7 @@ export default function GroupExpensesScreen() {
                                         totalAmount={formatCurrency(expense.amount || 0)}
                                         userAmount={formatCurrency(userAmount)}
                                         isOwed={isOwed}
-                                        avatarGroup={(expense.splitBetween || []).map((id: string) => `https://i.pravatar.cc/150?u=${id}`)}
+                                        avatarGroup={(expense.splitBetween || []).map((id: string) => getUserAvatar(id))}
                                         icon={theme.icon}
                                         iconBackgroundColor={theme.color}
                                         onPress={() =>

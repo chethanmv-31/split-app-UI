@@ -8,6 +8,7 @@ const AuthContext = React.createContext<{
     signInWithOtp: (mobile: string, otp: string) => Promise<{ success: boolean; message?: string }>;
     sendOtp: (mobile: string) => Promise<{ success: boolean; message?: string; otp?: string }>;
     signOut: () => void;
+    updateSessionUser: (updates: Record<string, any>) => void;
     session?: string | null;
     isLoading: boolean;
     hasNotifications: boolean;
@@ -21,6 +22,7 @@ const AuthContext = React.createContext<{
     signInWithOtp: async () => ({ success: false }),
     sendOtp: async () => ({ success: false }),
     signOut: () => null,
+    updateSessionUser: () => { },
     session: null,
     isLoading: false,
     hasNotifications: false,
@@ -91,6 +93,16 @@ export function SessionProvider(props: React.PropsWithChildren) {
                 },
                 signOut: () => {
                     setSession(null);
+                },
+                updateSessionUser: (updates) => {
+                    if (!session) return;
+                    try {
+                        const current = JSON.parse(session);
+                        const merged = { ...current, ...updates };
+                        setSession(JSON.stringify(merged));
+                    } catch {
+                        // If parsing fails, keep the current session unchanged.
+                    }
                 },
                 session,
                 isLoading,

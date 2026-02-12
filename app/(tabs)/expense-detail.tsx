@@ -94,6 +94,11 @@ export default function ExpenseDetailScreen() {
     return payer?.name || 'Unknown';
   };
 
+  const getUserAvatar = (userId: string) => {
+    const user = users.find((u: any) => u.id === userId);
+    return user?.avatar || `https://i.pravatar.cc/150?u=${userId}`;
+  };
+
   const getSplitDetails = () => {
     if (!expense) return [];
     
@@ -198,7 +203,7 @@ export default function ExpenseDetailScreen() {
             </View>
             <View style={styles.paidByBadge}>
               <Image 
-                source={{ uri: `https://i.pravatar.cc/150?u=${expense.paidBy}` }} 
+                source={{ uri: getUserAvatar(expense.paidBy) }} 
                 style={styles.avatar} 
               />
               <Text style={styles.infoValue}>{getPayerName(expense.paidBy)}</Text>
@@ -225,7 +230,7 @@ export default function ExpenseDetailScreen() {
               <View style={styles.splitRow}>
                 <View style={styles.splitLeft}>
                   <Image 
-                    source={{ uri: `https://i.pravatar.cc/150?u=${detail.userId}` }} 
+                    source={{ uri: getUserAvatar(detail.userId) }} 
                     style={styles.splitAvatar} 
                   />
                   <View>

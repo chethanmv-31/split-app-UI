@@ -13,6 +13,7 @@ export default function HistoryScreen() {
     const { session, addNotification, notifications, hasNotifications } = useSession();
     const currentUser = session ? JSON.parse(session) : null;
     const [expenses, setExpenses] = useState<any[]>([]);
+    const [userAvatarsById, setUserAvatarsById] = useState<Record<string, string>>({});
     const [groupsById, setGroupsById] = useState<Record<string, string>>({});
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
@@ -68,11 +69,28 @@ export default function HistoryScreen() {
             console.error('Error fetching groups:', error);
         }
     }, [currentUser?.id]);
+
+    const fetchUsers = useCallback(async () => {
+        try {
+            const result = await api.getUsers();
+            if (result.success) {
+                const avatarMap = result.data.reduce((acc: Record<string, string>, user: any) => {
+                    if (typeof user.avatar === 'string' && user.avatar.trim()) {
+                        acc[user.id] = user.avatar.trim();
+                    }
+                    return acc;
+                }, {});
+                setUserAvatarsById(avatarMap);
+            }
+        } catch (error) {
+            console.error('Error fetching users:', error);
+        }
+    }, []);
     const fetchData = useCallback(async (showLoading = true) => {
         if (showLoading) setLoading(true);
-        await Promise.all([fetchExpenses(), fetchGroups()]);
+        await Promise.all([fetchExpenses(), fetchGroups(), fetchUsers()]);
         setLoading(false);
-    }, [fetchExpenses, fetchGroups]);
+    }, [fetchExpenses, fetchGroups, fetchUsers]);
 
     useFocusEffect(
         useCallback(() => {
@@ -106,6 +124,10 @@ export default function HistoryScreen() {
     const formatDate = (dateStr: string) => {
         const date = new Date(dateStr);
         return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    };
+
+    const getUserAvatar = (userId: string) => {
+        return userAvatarsById[userId] || `https://i.pravatar.cc/150?u=${userId}`;
     };
 
     return (
@@ -166,7 +188,7 @@ export default function HistoryScreen() {
                                     totalAmount={`₹${(expense.amount || 0).toFixed(2)}`}
                                     userAmount={`₹${userAmount.toFixed(2)}`}
                                     isOwed={isOwed}
-                                    avatarGroup={(expense.splitBetween || []).map((id: string) => `https://i.pravatar.cc/150?u=${id}`)}
+                                    avatarGroup={(expense.splitBetween || []).map((id: string) => getUserAvatar(id))}
                                     icon={theme.icon}
                                     iconBackgroundColor={theme.color}
                                     groupName={expense.groupId ? groupsById[expense.groupId] : undefined}

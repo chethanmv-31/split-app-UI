@@ -227,6 +227,40 @@ export const api = {
             return { success: false, message: error.message || 'Network error' };
         }
     },
+    async updateUser(userId: string, updates: { name?: string; email?: string; mobile?: string; avatar?: string }) {
+        const normalizedMobile = updates.mobile !== undefined ? normalizePhone(updates.mobile) : undefined;
+        try {
+            const url = `${API_URL}/users/${userId}`;
+            const response = await fetch(url, {
+                method: 'PATCH',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    ...updates,
+                    ...(updates.mobile !== undefined ? { mobile: normalizedMobile } : {}),
+                }),
+            });
+            if (!response.ok) {
+                let errorMessage = 'Failed to update profile';
+                try {
+                    const errorData = await response.json();
+                    if (typeof errorData?.message === 'string') {
+                        errorMessage = errorData.message;
+                    } else if (Array.isArray(errorData?.message) && errorData.message.length > 0) {
+                        errorMessage = String(errorData.message[0]);
+                    }
+                } catch {
+                    // Ignore JSON parse errors and use fallback message.
+                }
+                throw new Error(errorMessage);
+            }
+            return { success: true, data: await response.json() };
+        } catch (error: any) {
+            console.error('Update user error:', error);
+            return { success: false, message: error.message || 'Network error' };
+        }
+    },
     async inviteUser(userData: { name: string; mobile?: string }) {
         const normalizedMobile = userData.mobile ? normalizePhone(userData.mobile) : undefined;
         try {

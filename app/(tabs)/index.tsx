@@ -17,6 +17,7 @@ export default function HomeScreen() {
   const { session, addNotification, notifications, hasNotifications } = useSession();
   const currentUser = session ? JSON.parse(session) : null;
   const [users, setUsers] = useState<any[]>([]);
+  const [userAvatarsById, setUserAvatarsById] = useState<Record<string, string>>({});
   const [expenses, setExpenses] = useState<any[]>([]);
   const [groupsById, setGroupsById] = useState<Record<string, string>>({});
   const [summary, setSummary] = useState({ youOwe: 0, owesYou: 0 });
@@ -30,13 +31,24 @@ export default function HomeScreen() {
     try {
       const result = await api.getUsers();
       if (result.success) {
+        const avatarMap = result.data.reduce((acc: Record<string, string>, user: any) => {
+          if (typeof user.avatar === 'string' && user.avatar.trim()) {
+            acc[user.id] = user.avatar.trim();
+          }
+          return acc;
+        }, {});
         const otherUsers = result.data.filter((u: any) => u.id !== currentUser?.id);
+        setUserAvatarsById(avatarMap);
         setUsers(otherUsers);
       }
     } catch (error) {
       console.error('Error fetching users:', error);
     }
   }, [currentUser?.id]);
+
+  const getUserAvatar = useCallback((userId: string) => {
+    return userAvatarsById[userId] || `https://i.pravatar.cc/150?u=${userId}`;
+  }, [userAvatarsById]);
 
   const fetchExpenses = useCallback(async () => {
     try {
@@ -240,7 +252,7 @@ export default function HomeScreen() {
                   totalAmount={`₹${(expense.amount || 0).toFixed(2)}`}
                   userAmount={`₹${userAmount.toFixed(2)}`}
                   isOwed={isOwed}
-                  avatarGroup={(expense.splitBetween || []).map((id: string) => `https://i.pravatar.cc/150?u=${id}`)}
+                  avatarGroup={(expense.splitBetween || []).map((id: string) => getUserAvatar(id))}
                   icon={icon}
                   groupName={expense.groupId ? groupsById[expense.groupId] : undefined}
                   isHighlight={isNew && hasNotifications}
@@ -306,7 +318,7 @@ export default function HomeScreen() {
                   status={friend.balance === 0 ? "Settled up" : (friend.balance > 0 ? "Get" : "Pay")}
                   amount={friend.balance === 0 ? "" : `₹${Math.abs(friend.balance).toFixed(2)}`}
                   isOwed={friend.balance >= 0}
-                  avatar={`https://i.pravatar.cc/150?u=${friend.id}`}
+                  avatar={getUserAvatar(friend.id)}
                   onPress={() => router.push({ pathname: '/(tabs)/user-detail', params: { userId: friend.id } })}
                 />
               ))
