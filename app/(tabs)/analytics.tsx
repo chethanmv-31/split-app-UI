@@ -38,6 +38,13 @@ const LINE_CHART_PADDING_TOP = 10;
 const LINE_CHART_PADDING_HORIZONTAL = 12;
 const LINE_CHART_PADDING_BOTTOM = 24;
 
+const toLocalDayKey = (dateObj: Date) => {
+  const year = dateObj.getFullYear();
+  const month = String(dateObj.getMonth() + 1).padStart(2, '0');
+  const day = String(dateObj.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
 const buildSmoothPath = (points: { x: number; y: number }[]) => {
   if (points.length === 0) return '';
   if (points.length === 1) return `M ${points[0].x} ${points[0].y}`;
@@ -119,7 +126,7 @@ export default function AnalyticsScreen() {
         next.groupTotals[groupLabel] = (next.groupTotals[groupLabel] || 0) + amount;
 
         const dateObj = new Date(expense.date);
-        const dayKey = Number.isNaN(dateObj.getTime()) ? 'Unknown' : dateObj.toISOString().slice(0, 10);
+        const dayKey = Number.isNaN(dateObj.getTime()) ? 'Unknown' : toLocalDayKey(dateObj);
         next.dailyTotals[dayKey] = (next.dailyTotals[dayKey] || 0) + amount;
 
         const monthKey = Number.isNaN(dateObj.getTime()) ? 'Unknown' : `${dateObj.getFullYear()}-${String(dateObj.getMonth() + 1).padStart(2, '0')}`;
@@ -230,7 +237,8 @@ export default function AnalyticsScreen() {
       .sort((a, b) => a[0].localeCompare(b[0]))
       .slice(-7)
       .map(([key, value]) => {
-        const dateObj = new Date(key);
+        const [year, month, day] = key.split('-').map((item) => Number(item));
+        const dateObj = new Date(year, (month || 1) - 1, day || 1);
         return {
           key,
           label: Number.isNaN(dateObj.getTime())

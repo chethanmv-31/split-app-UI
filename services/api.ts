@@ -21,7 +21,12 @@ let accessToken: string | null = null;
 
 const normalizePhone = (phone: string): string => {
     if (!phone) return phone;
-    return phone.replace(/^\+91/, '').trim();
+    const cleaned = phone.trim().replace(/[^\d+]/g, '');
+    if (!cleaned) return '';
+    if (cleaned.startsWith('+')) {
+        return `+${cleaned.slice(1).replace(/\D/g, '')}`;
+    }
+    return cleaned.replace(/\D/g, '');
 };
 
 const withAuthHeaders = (headers: Record<string, string> = {}) => {

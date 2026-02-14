@@ -5,13 +5,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useSession } from '@/ctx';
 
 export default function Login() {
-    const [loginMode, setLoginMode] = React.useState<'email' | 'mobile'>('email');
-    const [mobile, setMobile] = React.useState('');
-    const [otp, setOtp] = React.useState('');
-    const [showOtpInput, setShowOtpInput] = React.useState(false);
-    const [timer, setTimer] = React.useState(0);
-
-    const { signIn, signInWithOtp, sendOtp } = useSession();
+    const { signIn } = useSession();
     const [email, setEmail] = React.useState('');
     const [password, setPassword] = React.useState('');
 
@@ -38,44 +32,6 @@ export default function Login() {
         }
     };
 
-    React.useEffect(() => {
-        let interval: any;
-        if (timer > 0) {
-            interval = setInterval(() => {
-                setTimer((prev) => prev - 1);
-            }, 1000);
-        }
-        return () => clearInterval(interval);
-    }, [timer]);
-
-    const handleSendOtp = async () => {
-        if (mobile.length < 10) {
-            Alert.alert('Error', 'Please enter a valid mobile number');
-            return;
-        }
-        const result = await sendOtp(mobile);
-        if (result.success) {
-            setShowOtpInput(true);
-            setTimer(60);
-            Alert.alert('Success', 'OTP sent to your mobile number');
-        } else {
-            Alert.alert('Error', result.message || 'Failed to send OTP');
-        }
-    };
-
-    const handleVerifyOtp = async () => {
-        if (!otp) {
-            Alert.alert('Error', 'Please enter OTP');
-            return;
-        }
-        const result = await signInWithOtp(mobile, otp);
-        if (result.success) {
-            router.replace('/');
-        } else {
-            Alert.alert('Error', result.message || 'Login failed');
-        }
-    };
-
     return (
         <SafeAreaView style={styles.container}>
             <KeyboardAvoidingView
@@ -95,104 +51,34 @@ export default function Login() {
                         <Text style={styles.title}>Welcome Back!</Text>
                         <Text style={styles.subtitle}>Sign in to continue</Text>
 
-                        <View style={styles.tabContainer}>
-                            <TouchableOpacity
-                                style={[styles.tab, loginMode === 'email' && styles.activeTab]}
-                                onPress={() => setLoginMode('email')}
-                            >
-                                <Text style={[styles.tabText, loginMode === 'email' && styles.activeTabText]}>Email</Text>
-                            </TouchableOpacity>
-                            <TouchableOpacity
-                                style={[styles.tab, loginMode === 'mobile' && styles.activeTab]}
-                                onPress={() => setLoginMode('mobile')}
-                            >
-                                <Text style={[styles.tabText, loginMode === 'mobile' && styles.activeTabText]}>Mobile</Text>
-                            </TouchableOpacity>
+                        <View style={styles.inputContainer}>
+                            <Text style={styles.label}>Email</Text>
+                            <TextInput
+                                style={styles.input}
+                                placeholder="Enter your email"
+                                placeholderTextColor="#999"
+                                value={email}
+                                onChangeText={setEmail}
+                                autoCapitalize="none"
+                                keyboardType="email-address"
+                            />
                         </View>
 
-                        {loginMode === 'email' ? (
-                            <>
-                                <View style={styles.inputContainer}>
-                                    <Text style={styles.label}>Email</Text>
-                                    <TextInput
-                                        style={styles.input}
-                                        placeholder="Enter your email"
-                                        placeholderTextColor="#999"
-                                        value={email}
-                                        onChangeText={setEmail}
-                                        autoCapitalize="none"
-                                        keyboardType="email-address"
-                                    />
-                                </View>
+                        <View style={styles.inputContainer}>
+                            <Text style={styles.label}>Password</Text>
+                            <TextInput
+                                style={styles.input}
+                                placeholder="Enter your password"
+                                placeholderTextColor="#999"
+                                value={password}
+                                onChangeText={setPassword}
+                                secureTextEntry
+                            />
+                        </View>
 
-                                <View style={styles.inputContainer}>
-                                    <Text style={styles.label}>Password</Text>
-                                    <TextInput
-                                        style={styles.input}
-                                        placeholder="Enter your password"
-                                        placeholderTextColor="#999"
-                                        value={password}
-                                        onChangeText={setPassword}
-                                        secureTextEntry
-                                    />
-                                </View>
-
-                                <TouchableOpacity style={styles.button} onPress={handleLogin}>
-                                    <Text style={styles.buttonText}>Login</Text>
-                                </TouchableOpacity>
-                            </>
-                        ) : (
-                            <>
-                                <View style={styles.inputContainer}>
-                                    <Text style={styles.label}>Mobile Number</Text>
-                                    <TextInput
-                                        style={styles.input}
-                                        placeholder="Enter your mobile number"
-                                        placeholderTextColor="#999"
-                                        value={mobile}
-                                        onChangeText={setMobile}
-                                        keyboardType="phone-pad"
-                                        editable={!showOtpInput}
-                                    />
-                                </View>
-
-                                {showOtpInput && (
-                                    <View style={styles.inputContainer}>
-                                        <Text style={styles.label}>OTP</Text>
-                                        <TextInput
-                                            style={styles.input}
-                                            placeholder="Enter OTP"
-                                            placeholderTextColor="#999"
-                                            value={otp}
-                                            onChangeText={setOtp}
-                                            keyboardType="number-pad"
-                                        />
-                                    </View>
-                                )}
-
-                                {!showOtpInput ? (
-                                    <TouchableOpacity style={styles.button} onPress={handleSendOtp}>
-                                        <Text style={styles.buttonText}>Send OTP</Text>
-                                    </TouchableOpacity>
-                                ) : (
-                                    <TouchableOpacity style={styles.button} onPress={handleVerifyOtp}>
-                                        <Text style={styles.buttonText}>Verify & Login</Text>
-                                    </TouchableOpacity>
-                                )}
-
-                                {showOtpInput && (
-                                    <TouchableOpacity
-                                        style={[styles.resendButton, timer > 0 && styles.disabledResendButton]}
-                                        onPress={handleSendOtp}
-                                        disabled={timer > 0}
-                                    >
-                                        <Text style={[styles.resendButtonText, timer > 0 && styles.disabledResendButtonText]}>
-                                            {timer > 0 ? `Resend OTP in ${timer}s` : 'Resend OTP'}
-                                        </Text>
-                                    </TouchableOpacity>
-                                )}
-                            </>
-                        )}
+                        <TouchableOpacity style={styles.button} onPress={handleLogin}>
+                            <Text style={styles.buttonText}>Login</Text>
+                        </TouchableOpacity>
 
                         <View style={styles.footer}>
                             <Text style={styles.footerText}>Don't have an account? </Text>
@@ -272,36 +158,6 @@ const styles = StyleSheet.create({
         marginBottom: 24,
         textAlign: 'center',
     },
-    tabContainer: {
-        flexDirection: 'row',
-        backgroundColor: '#F5F5F5',
-        borderRadius: 12,
-        padding: 4,
-        marginBottom: 24,
-    },
-    tab: {
-        flex: 1,
-        paddingVertical: 10,
-        alignItems: 'center',
-        borderRadius: 8,
-    },
-    activeTab: {
-        backgroundColor: 'white',
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 1 },
-        shadowOpacity: 0.1,
-        shadowRadius: 2,
-        elevation: 2,
-    },
-    tabText: {
-        color: '#666',
-        fontWeight: '600',
-        fontSize: 14,
-    },
-    activeTabText: {
-        color: '#FF8C69',
-        fontWeight: 'bold',
-    },
     inputContainer: {
         marginBottom: 20,
     },
@@ -349,21 +205,5 @@ const styles = StyleSheet.create({
         color: '#FF8C69',
         fontWeight: 'bold',
         fontSize: 14,
-    },
-    resendButton: {
-        marginTop: 16,
-        alignItems: 'center',
-        padding: 8,
-    },
-    disabledResendButton: {
-        opacity: 0.6,
-    },
-    resendButtonText: {
-        color: '#FF8C69',
-        fontSize: 14,
-        fontWeight: '600',
-    },
-    disabledResendButtonText: {
-        color: '#999',
     },
 });
