@@ -72,6 +72,17 @@ export function SessionProvider(props: React.PropsWithChildren) {
         }
     }, [session]);
 
+    React.useEffect(() => {
+        api.setUnauthorizedHandler(() => {
+            api.setAccessToken(null);
+            setSession(null);
+        });
+
+        return () => {
+            api.setUnauthorizedHandler(null);
+        };
+    }, [setSession]);
+
     return (
         <AuthContext.Provider
             value={{

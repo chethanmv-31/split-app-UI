@@ -18,6 +18,14 @@ export const API_URL = configuredApiUrl
             : `http://${fallbackHost}:3000`;
 
 let accessToken: string | null = null;
+let unauthorizedHandler: (() => void) | null = null;
+let unauthorizedNotified = false;
+
+const notifyUnauthorized = () => {
+    if (unauthorizedNotified) return;
+    unauthorizedNotified = true;
+    unauthorizedHandler?.();
+};
 
 const normalizePhone = (phone: string): string => {
     if (!phone) return phone;
@@ -56,7 +64,14 @@ const parseError = async (response: Response, fallbackMessage: string) => {
 
 export const api = {
     setAccessToken(token: string | null) {
+        if (token !== accessToken) {
+            unauthorizedNotified = false;
+        }
         accessToken = token;
+    },
+
+    setUnauthorizedHandler(handler: (() => void) | null) {
+        unauthorizedHandler = handler;
     },
 
     async login(email: string, password: string) {
@@ -116,20 +131,22 @@ export const api = {
     },
 
     async verifyOtp(mobile: string, otp: string) {
+        const normalizedMobile = normalizePhone(mobile);
         try {
             const response = await fetch(`${API_URL}/auth/verify-otp`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                 },
-                body: JSON.stringify({ mobile, otp }),
+                body: JSON.stringify({ mobile: normalizedMobile, otp: otp.trim() }),
             });
 
-            const data = await response.json();
-            if (!response.ok || !data.success) {
-                return { success: false, message: data?.message || 'Invalid OTP' };
+            if (!response.ok) {
+                const message = await parseError(response, 'Invalid OTP');
+                return { success: false, message };
             }
 
+            const data = await response.json();
             return { success: true, user: data.user, accessToken: data.accessToken };
         } catch {
             return { success: false, message: 'Network error' };
@@ -137,20 +154,22 @@ export const api = {
     },
 
     async sendOtp(mobile: string) {
+        const normalizedMobile = normalizePhone(mobile);
         try {
             const response = await fetch(`${API_URL}/auth/send-otp`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                 },
-                body: JSON.stringify({ mobile }),
+                body: JSON.stringify({ mobile: normalizedMobile }),
             });
 
-            const data = await response.json();
             if (!response.ok) {
-                return { success: false, message: data?.message || 'Failed to send OTP' };
+                const message = await parseError(response, 'Failed to send OTP');
+                return { success: false, message };
             }
 
+            const data = await response.json();
             return { success: true, message: data.message };
         } catch {
             return { success: false, message: 'Network error' };
@@ -166,6 +185,10 @@ export const api = {
                 }),
                 body: JSON.stringify(expense),
             });
+            if (response.status === 401) {
+                notifyUnauthorized();
+                return { success: false, message: 'Session expired. Please sign in again.' };
+            }
 
             if (!response.ok) {
                 const message = await parseError(response, 'Failed to add expense');
@@ -187,6 +210,10 @@ export const api = {
             const response = await fetch(url, {
                 headers: withAuthHeaders(),
             });
+            if (response.status === 401) {
+                notifyUnauthorized();
+                return { success: false, message: 'Session expired. Please sign in again.' };
+            }
             if (!response.ok) {
                 throw new Error('Failed to fetch expenses');
             }
@@ -221,6 +248,10 @@ export const api = {
                     ...(updates.mobile !== undefined ? { mobile: normalizedMobile } : {}),
                 }),
             });
+            if (response.status === 401) {
+                notifyUnauthorized();
+                return { success: false, message: 'Session expired. Please sign in again.' };
+            }
             if (!response.ok) {
                 throw new Error(await parseError(response, 'Failed to update profile'));
             }
@@ -243,6 +274,10 @@ export const api = {
                     mobile: normalizedMobile,
                 }),
             });
+            if (response.status === 401) {
+                notifyUnauthorized();
+                return { success: false, message: 'Session expired. Please sign in again.' };
+            }
             if (!response.ok) {
                 throw new Error('Failed to invite user');
             }
@@ -262,6 +297,10 @@ export const api = {
                 }),
                 body: JSON.stringify(payload),
             });
+            if (response.status === 401) {
+                notifyUnauthorized();
+                return { success: false, message: 'Session expired. Please sign in again.' };
+            }
 
             if (!response.ok) {
                 throw new Error(await parseError(response, 'Failed to create group'));
@@ -278,6 +317,10 @@ export const api = {
             const response = await fetch(`${API_URL}/groups`, {
                 headers: withAuthHeaders(),
             });
+            if (response.status === 401) {
+                notifyUnauthorized();
+                return { success: false, message: 'Session expired. Please sign in again.' };
+            }
             if (!response.ok) {
                 throw new Error('Failed to fetch groups');
             }
@@ -300,6 +343,10 @@ export const api = {
                 }),
                 body: JSON.stringify(groupData),
             });
+            if (response.status === 401) {
+                notifyUnauthorized();
+                return { success: false, message: 'Session expired. Please sign in again.' };
+            }
             if (!response.ok) {
                 throw new Error(await parseError(response, 'Failed to update group'));
             }
@@ -315,6 +362,10 @@ export const api = {
                 method: 'DELETE',
                 headers: withAuthHeaders(),
             });
+            if (response.status === 401) {
+                notifyUnauthorized();
+                return { success: false, message: 'Session expired. Please sign in again.' };
+            }
             if (!response.ok) {
                 throw new Error(await parseError(response, 'Failed to delete group'));
             }

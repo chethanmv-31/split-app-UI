@@ -32,6 +32,8 @@ type TrendDatum = {
   value: number;
 };
 
+type TimeFilter = '30D' | '90D' | 'ALL';
+
 const CHART_COLORS = ['#FF8C69', '#F4B400', '#43A047', '#1E88E5', '#8E24AA', '#0097A7'];
 const LINE_CHART_HEIGHT = 190;
 const LINE_CHART_PADDING_TOP = 10;
@@ -76,22 +78,42 @@ export default function AnalyticsScreen() {
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [analytics, setAnalytics] = useState<AnalyticsState>(initialState);
+  const [groupFilters, setGroupFilters] = useState<Array<{ id: string; name: string }>>([]);
+  const [selectedTimeFilter, setSelectedTimeFilter] = useState<TimeFilter>('90D');
+  const [selectedGroupFilter, setSelectedGroupFilter] = useState<string>('all');
+  const [isGroupDropdownOpen, setIsGroupDropdownOpen] = useState(false);
   const [trendGroupBy, setTrendGroupBy] = useState<'daily' | 'monthly'>('monthly');
   const [lineChartWidth, setLineChartWidth] = useState(0);
   const [selectedTrendKey, setSelectedTrendKey] = useState<string | null>(null);
 
+  const isWithinRange = useCallback((date: Date) => {
+    if (selectedTimeFilter === 'ALL') return true;
+    const days = selectedTimeFilter === '30D' ? 30 : 90;
+    const since = Date.now() - days * 24 * 60 * 60 * 1000;
+    return date.getTime() >= since;
+  }, [selectedTimeFilter]);
+
   const fetchData = useCallback(async (showLoading = true) => {
     if (showLoading) setLoading(true);
+    setErrorMessage(null);
     try {
       const [expenseResult, groupResult] = await Promise.all([
         api.getExpenses(currentUser?.id),
         api.getGroups(currentUser?.id),
       ]);
 
-      if (!expenseResult.success) return;
+      if (!expenseResult.success) {
+        setAnalytics(initialState);
+        setErrorMessage(expenseResult.message || 'Failed to load analytics data.');
+        return;
+      }
 
-      const groupNameById = (groupResult.success ? groupResult.data : []).reduce(
+      const groups = groupResult.success ? groupResult.data : [];
+      setGroupFilters(groups.map((group: any) => ({ id: group.id, name: group.name })));
+
+      const groupNameById = groups.reduce(
         (acc: Record<string, string>, group: any) => {
           if (group?.id && group?.name) acc[group.id] = group.name;
           return acc;
@@ -99,18 +121,29 @@ export default function AnalyticsScreen() {
         {}
       );
 
+      const filteredExpenses = expenseResult.data.filter((expense: any) => {
+        const dateObj = new Date(expense.date);
+        if (Number.isNaN(dateObj.getTime())) return false;
+
+        if (!isWithinRange(dateObj)) return false;
+
+        if (selectedGroupFilter === 'all') return true;
+        if (selectedGroupFilter === 'personal') return !expense.groupId;
+        return expense.groupId === selectedGroupFilter;
+      });
+
       const next: AnalyticsState = {
         youOwe: 0,
         owesYou: 0,
         totalSpent: 0,
-        transactionCount: expenseResult.data.length,
+        transactionCount: filteredExpenses.length,
         categoryTotals: {},
         groupTotals: {},
         dailyTotals: {},
         monthlyTotals: {},
       };
 
-      expenseResult.data.forEach((expense: any) => {
+      filteredExpenses.forEach((expense: any) => {
         const amount = Number(expense.amount) || 0;
         const splitBetween = expense.splitBetween || [];
         const splitDetails = expense.splitDetails || [];
@@ -158,11 +191,12 @@ export default function AnalyticsScreen() {
 
       setAnalytics(next);
     } catch (error) {
-      console.error('Error fetching analytics:', error);
+      setAnalytics(initialState);
+      setErrorMessage('Could not load analytics right now.');
     } finally {
       setLoading(false);
     }
-  }, [currentUser?.id]);
+  }, [currentUser?.id, isWithinRange, selectedGroupFilter]);
 
   useFocusEffect(
     useCallback(() => {
@@ -317,6 +351,20 @@ export default function AnalyticsScreen() {
     [trendGraph, selectedTrendKey]
   );
 
+  const groupOptions = useMemo(
+    () => [
+      { id: 'all', name: 'All Groups' },
+      { id: 'personal', name: 'Personal' },
+      ...groupFilters,
+    ],
+    [groupFilters]
+  );
+
+  const selectedGroupLabel = useMemo(
+    () => groupOptions.find((option) => option.id === selectedGroupFilter)?.name || 'All Groups',
+    [groupOptions, selectedGroupFilter]
+  );
+
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
       <StatusBar barStyle="light-content" />
@@ -331,8 +379,62 @@ export default function AnalyticsScreen() {
         </View>
 
         <View style={styles.panel}>
+          <View style={styles.filterSection}>
+            <View style={styles.segmentedControl}>
+              {(['30D', '90D', 'ALL'] as TimeFilter[]).map((filterKey) => (
+                <Pressable
+                  key={filterKey}
+                  style={[styles.segmentedControlBtn, selectedTimeFilter === filterKey && styles.segmentedControlBtnActive]}
+                  onPress={() => setSelectedTimeFilter(filterKey)}
+                >
+                  <Text style={[styles.segmentedControlText, selectedTimeFilter === filterKey && styles.segmentedControlTextActive]}>
+                    {filterKey === 'ALL' ? 'All Time' : filterKey}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+            <View style={styles.dropdownWrap}>
+              <Pressable style={styles.dropdownButton} onPress={() => setIsGroupDropdownOpen((prev) => !prev)}>
+                <Text style={styles.dropdownButtonText} numberOfLines={1}>
+                  {selectedGroupLabel}
+                </Text>
+                <Text style={styles.dropdownCaret}>{isGroupDropdownOpen ? '▲' : '▼'}</Text>
+              </Pressable>
+
+              {isGroupDropdownOpen ? (
+                <View style={styles.dropdownMenu}>
+                  {groupOptions.map((group) => (
+                    <Pressable
+                      key={group.id}
+                      style={[styles.dropdownItem, selectedGroupFilter === group.id && styles.dropdownItemActive]}
+                      onPress={() => {
+                        setSelectedGroupFilter(group.id);
+                        setIsGroupDropdownOpen(false);
+                      }}
+                    >
+                      <Text style={[styles.dropdownItemText, selectedGroupFilter === group.id && styles.dropdownItemTextActive]}>
+                        {group.name}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </View>
+              ) : null}
+            </View>
+          </View>
+
+          {errorMessage ? (
+            <View style={styles.errorBox}>
+              <Text style={styles.errorText}>{errorMessage}</Text>
+            </View>
+          ) : null}
+
           {loading ? (
             <ActivityIndicator size="small" color="#FF8C69" style={{ marginVertical: 24 }} />
+          ) : analytics.transactionCount === 0 ? (
+            <View style={styles.emptyBox}>
+              <Text style={styles.emptyTitle}>No analytics data for this filter</Text>
+              <Text style={styles.emptySubtitle}>Try another time range or group.</Text>
+            </View>
           ) : (
             <>
               <View style={styles.cardsRow}>
@@ -559,6 +661,123 @@ const styles = StyleSheet.create({
     paddingTop: 24,
     paddingHorizontal: 20,
     minHeight: '100%',
+  },
+  filterSection: {
+    marginBottom: 10,
+    gap: 8,
+  },
+  segmentedControl: {
+    flexDirection: 'row',
+    backgroundColor: '#ECECEC',
+    borderRadius: 12,
+    padding: 4,
+  },
+  segmentedControlBtn: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 8,
+    borderRadius: 9,
+  },
+  segmentedControlBtnActive: {
+    backgroundColor: '#FFFFFF',
+  },
+  segmentedControlText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#666',
+  },
+  segmentedControlTextActive: {
+    color: '#FF8C69',
+  },
+  dropdownWrap: {
+    position: 'relative',
+    zIndex: 20,
+  },
+  dropdownButton: {
+    height: 42,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E6E6E6',
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  dropdownButtonText: {
+    flex: 1,
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#333',
+    marginRight: 10,
+  },
+  dropdownCaret: {
+    fontSize: 11,
+    color: '#666',
+  },
+  dropdownMenu: {
+    position: 'absolute',
+    top: 48,
+    left: 0,
+    right: 0,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E6E6E6',
+    backgroundColor: '#FFFFFF',
+    overflow: 'hidden',
+    zIndex: 30,
+    elevation: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.12,
+    shadowRadius: 10,
+  },
+  dropdownItem: {
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#F0F0F0',
+  },
+  dropdownItemActive: {
+    backgroundColor: '#FFF3ED',
+  },
+  dropdownItemText: {
+    fontSize: 13,
+    color: '#444',
+    fontWeight: '600',
+  },
+  dropdownItemTextActive: {
+    color: '#FF8C69',
+  },
+  errorBox: {
+    backgroundColor: '#FCE8E6',
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    marginBottom: 10,
+  },
+  errorText: {
+    color: '#A33A2B',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  emptyBox: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 20,
+    alignItems: 'center',
+    marginTop: 8,
+  },
+  emptyTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#2B2B2B',
+  },
+  emptySubtitle: {
+    marginTop: 4,
+    fontSize: 13,
+    color: '#666',
   },
   cardsRow: {
     flexDirection: 'row',
