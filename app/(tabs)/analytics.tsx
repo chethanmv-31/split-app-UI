@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Pressable, RefreshControl, ScrollView, StatusBar, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, Dimensions, Pressable, RefreshControl, ScrollView, StatusBar, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from 'expo-router';
 import Svg, { Circle, Line, Path } from 'react-native-svg';
@@ -81,12 +81,16 @@ export default function AnalyticsScreen() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [analytics, setAnalytics] = useState<AnalyticsState>(initialState);
   const [groupFilters, setGroupFilters] = useState<Array<{ id: string; name: string }>>([]);
+  const [isExportingPdf, setIsExportingPdf] = useState(false);
   const [selectedTimeFilter, setSelectedTimeFilter] = useState<TimeFilter>('90D');
   const [selectedGroupFilter, setSelectedGroupFilter] = useState<string>('all');
   const [isGroupDropdownOpen, setIsGroupDropdownOpen] = useState(false);
   const [trendGroupBy, setTrendGroupBy] = useState<'daily' | 'monthly'>('monthly');
   const [lineChartWidth, setLineChartWidth] = useState(0);
   const [selectedTrendKey, setSelectedTrendKey] = useState<string | null>(null);
+  const [scrollContentHeight, setScrollContentHeight] = useState(0);
+  const scrollRef = React.useRef<ScrollView | null>(null);
+  const exportContentRef = React.useRef<View | null>(null);
 
   const isWithinRange = useCallback((date: Date) => {
     if (selectedTimeFilter === 'ALL') return true;
@@ -351,6 +355,83 @@ export default function AnalyticsScreen() {
     [trendGraph, selectedTrendKey]
   );
 
+  const handleExportPdf = useCallback(async () => {
+    if (isExportingPdf) return;
+
+    setIsGroupDropdownOpen(false);
+    setIsExportingPdf(true);
+
+    try {
+      let captureRef: any;
+      let Print: any;
+      let Sharing: any;
+
+      try {
+        captureRef = require('react-native-view-shot').captureRef;
+        Print = require('expo-print');
+        Sharing = require('expo-sharing');
+      } catch {
+        Alert.alert(
+          'Missing packages',
+          'Install: expo-print expo-sharing react-native-view-shot',
+        );
+        return;
+      }
+
+      if (!scrollRef.current) {
+        Alert.alert('Export failed', 'Screen is not ready for export.');
+        return;
+      }
+
+      const { width: windowWidth } = Dimensions.get('window');
+      const captureTarget = exportContentRef.current || scrollRef.current;
+
+      if (!captureTarget) {
+        Alert.alert('Export failed', 'Screen is not ready for export.');
+        return;
+      }
+
+      const fallbackHeight = windowWidth * 2;
+      const measuredHeight = scrollContentHeight > 0 ? scrollContentHeight : fallbackHeight;
+
+      const imageDataUri = await captureRef(captureTarget, {
+        format: 'png',
+        quality: 1,
+        result: 'data-uri',
+      });
+
+      const html = `
+        <html>
+          <head>
+            <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+          </head>
+          <body style="margin:0;padding:0;background:#ffffff;">
+            <img src="${imageDataUri}" style="width:100%;height:auto;display:block;" />
+          </body>
+        </html>
+      `;
+
+      const pdfWidth = 595;
+      const pdfHeight = Math.max(842, Math.round((measuredHeight / Math.max(windowWidth, 1)) * pdfWidth));
+      const { uri } = await Print.printToFileAsync({ html, width: pdfWidth, height: pdfHeight });
+
+      if (Sharing?.isAvailableAsync && await Sharing.isAvailableAsync()) {
+        await Sharing.shareAsync(uri, {
+          mimeType: 'application/pdf',
+          dialogTitle: 'Share Analytics PDF',
+          UTI: 'com.adobe.pdf',
+        });
+      } else {
+        Alert.alert('PDF exported', `Saved at:\n${uri}`);
+      }
+    } catch (error: any) {
+      const reason = error?.message ? `\n\nReason: ${error.message}` : '';
+      Alert.alert('Export failed', `Could not generate analytics PDF.${reason}`);
+    } finally {
+      setIsExportingPdf(false);
+    }
+  }, [isExportingPdf]);
+
   const groupOptions = useMemo(
     () => [
       { id: 'all', name: 'All Groups' },
@@ -369,10 +450,13 @@ export default function AnalyticsScreen() {
     <SafeAreaView style={styles.container} edges={['top']}>
       <StatusBar barStyle="light-content" />
       <ScrollView
+        ref={scrollRef}
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{ paddingBottom: 100 }}
+        onContentSizeChange={(_, height) => setScrollContentHeight(height)}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#FF8C69']} />}
       >
+        <View ref={exportContentRef} collapsable={false}>
         <View style={styles.header}>
           <Text style={styles.headerTitle}>Overall Analytics</Text>
           <Text style={styles.headerSubtitle}>Your complete split expense summary</Text>
@@ -420,6 +504,11 @@ export default function AnalyticsScreen() {
                 </View>
               ) : null}
             </View>
+            <Pressable style={styles.exportLinkWrap} onPress={handleExportPdf} disabled={isExportingPdf}>
+              <Text style={[styles.exportLinkText, isExportingPdf && styles.exportLinkTextDisabled]}>
+                {isExportingPdf ? 'Exporting PDF...' : 'Export PDF'}
+              </Text>
+            </Pressable>
           </View>
 
           {errorMessage ? (
@@ -630,6 +719,7 @@ export default function AnalyticsScreen() {
             </>
           )}
         </View>
+        </View>
       </ScrollView>
     </SafeAreaView>
   );
@@ -749,6 +839,19 @@ const styles = StyleSheet.create({
   },
   dropdownItemTextActive: {
     color: '#FF8C69',
+  },
+  exportLinkWrap: {
+    marginTop: 2,
+    alignSelf: 'flex-end',
+    paddingVertical: 4,
+  },
+  exportLinkText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#1E88E5',
+  },
+  exportLinkTextDisabled: {
+    color: '#9CB7DF',
   },
   errorBox: {
     backgroundColor: '#FCE8E6',
