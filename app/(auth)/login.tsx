@@ -57,7 +57,7 @@ export default function Login() {
         if (result.success) {
             setShowOtpInput(true);
             setTimer(60);
-            Alert.alert('Success', `OTP sent to your mobile number (Actual: ${result.otp})`);
+            Alert.alert('Success', 'OTP sent to your mobile number');
         } else {
             Alert.alert('Error', result.message || 'Failed to send OTP');
         }
