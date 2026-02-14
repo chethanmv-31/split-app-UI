@@ -42,6 +42,7 @@ export default function TabLayout() {
         name="expense-detail"
         options={{
           href: null,
+          tabBarStyle: { display: "none" },
         }}
       />
       <Tabs.Screen

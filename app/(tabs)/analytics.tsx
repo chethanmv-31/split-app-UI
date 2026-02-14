@@ -1,7 +1,8 @@
-import React, { useCallback, useMemo, useState } from 'react';
-import { ActivityIndicator, RefreshControl, ScrollView, StatusBar, StyleSheet, Text, View } from 'react-native';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { ActivityIndicator, Pressable, RefreshControl, ScrollView, StatusBar, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from 'expo-router';
+import Svg, { Circle, Line, Path } from 'react-native-svg';
 
 import { api } from '../../services/api';
 import { useSession } from '../../ctx';
@@ -13,6 +14,42 @@ type AnalyticsState = {
   transactionCount: number;
   categoryTotals: Record<string, number>;
   groupTotals: Record<string, number>;
+  dailyTotals: Record<string, number>;
+  monthlyTotals: Record<string, number>;
+};
+
+type RankedDatum = {
+  key: string;
+  label: string;
+  value: number;
+  percentage: number;
+  color: string;
+};
+
+type TrendDatum = {
+  key: string;
+  label: string;
+  value: number;
+};
+
+const CHART_COLORS = ['#FF8C69', '#F4B400', '#43A047', '#1E88E5', '#8E24AA', '#0097A7'];
+const LINE_CHART_HEIGHT = 190;
+const LINE_CHART_PADDING_TOP = 10;
+const LINE_CHART_PADDING_HORIZONTAL = 12;
+const LINE_CHART_PADDING_BOTTOM = 24;
+
+const buildSmoothPath = (points: { x: number; y: number }[]) => {
+  if (points.length === 0) return '';
+  if (points.length === 1) return `M ${points[0].x} ${points[0].y}`;
+
+  let path = `M ${points[0].x} ${points[0].y}`;
+  for (let i = 1; i < points.length; i += 1) {
+    const prev = points[i - 1];
+    const curr = points[i];
+    const controlX = (prev.x + curr.x) / 2;
+    path += ` C ${controlX} ${prev.y}, ${controlX} ${curr.y}, ${curr.x} ${curr.y}`;
+  }
+  return path;
 };
 
 const initialState: AnalyticsState = {
@@ -22,6 +59,8 @@ const initialState: AnalyticsState = {
   transactionCount: 0,
   categoryTotals: {},
   groupTotals: {},
+  dailyTotals: {},
+  monthlyTotals: {},
 };
 
 export default function AnalyticsScreen() {
@@ -31,12 +70,15 @@ export default function AnalyticsScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [analytics, setAnalytics] = useState<AnalyticsState>(initialState);
+  const [trendGroupBy, setTrendGroupBy] = useState<'daily' | 'monthly'>('monthly');
+  const [lineChartWidth, setLineChartWidth] = useState(0);
+  const [selectedTrendKey, setSelectedTrendKey] = useState<string | null>(null);
 
   const fetchData = useCallback(async (showLoading = true) => {
     if (showLoading) setLoading(true);
     try {
       const [expenseResult, groupResult] = await Promise.all([
-        api.getExpenses(),
+        api.getExpenses(currentUser?.id),
         api.getGroups(currentUser?.id),
       ]);
 
@@ -57,6 +99,8 @@ export default function AnalyticsScreen() {
         transactionCount: expenseResult.data.length,
         categoryTotals: {},
         groupTotals: {},
+        dailyTotals: {},
+        monthlyTotals: {},
       };
 
       expenseResult.data.forEach((expense: any) => {
@@ -73,6 +117,13 @@ export default function AnalyticsScreen() {
 
         const groupLabel = expense.groupId ? (groupNameById[expense.groupId] || 'Unnamed Group') : 'Personal';
         next.groupTotals[groupLabel] = (next.groupTotals[groupLabel] || 0) + amount;
+
+        const dateObj = new Date(expense.date);
+        const dayKey = Number.isNaN(dateObj.getTime()) ? 'Unknown' : dateObj.toISOString().slice(0, 10);
+        next.dailyTotals[dayKey] = (next.dailyTotals[dayKey] || 0) + amount;
+
+        const monthKey = Number.isNaN(dateObj.getTime()) ? 'Unknown' : `${dateObj.getFullYear()}-${String(dateObj.getMonth() + 1).padStart(2, '0')}`;
+        next.monthlyTotals[monthKey] = (next.monthlyTotals[monthKey] || 0) + amount;
 
         if (isPaidByMe) {
           if (expense.splitType === 'EQUAL') {
@@ -118,23 +169,145 @@ export default function AnalyticsScreen() {
     setRefreshing(false);
   }, [fetchData]);
 
-  const topCategories = useMemo(
-    () =>
-      Object.entries(analytics.categoryTotals)
-        .sort((a, b) => b[1] - a[1])
-        .slice(0, 5),
-    [analytics.categoryTotals]
-  );
-
-  const topGroups = useMemo(
-    () =>
-      Object.entries(analytics.groupTotals)
-        .sort((a, b) => b[1] - a[1])
-        .slice(0, 5),
-    [analytics.groupTotals]
-  );
-
   const formatMoney = (value: number) => `\u20B9${value.toFixed(2)}`;
+  const formatCompactMoney = (value: number) => {
+    if (value >= 1000000) return `\u20B9${(value / 1000000).toFixed(1)}M`;
+    if (value >= 1000) return `\u20B9${(value / 1000).toFixed(1)}K`;
+    return `\u20B9${Math.round(value)}`;
+  };
+
+  const categoryChart = useMemo<RankedDatum[]>(() => {
+    const total = Object.values(analytics.categoryTotals).reduce((acc, value) => acc + value, 0);
+    return Object.entries(analytics.categoryTotals)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+      .map(([key, value], index) => ({
+        key,
+        label: key,
+        value,
+        percentage: total > 0 ? (value / total) * 100 : 0,
+        color: CHART_COLORS[index % CHART_COLORS.length],
+      }));
+  }, [analytics.categoryTotals]);
+
+  const groupChart = useMemo<RankedDatum[]>(() => {
+    const total = Object.values(analytics.groupTotals).reduce((acc, value) => acc + value, 0);
+    return Object.entries(analytics.groupTotals)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+      .map(([key, value], index) => ({
+        key,
+        label: key,
+        value,
+        percentage: total > 0 ? (value / total) * 100 : 0,
+        color: CHART_COLORS[index % CHART_COLORS.length],
+      }));
+  }, [analytics.groupTotals]);
+
+  const monthlyGraph = useMemo<TrendDatum[]>(() => {
+    const entries = Object.entries(analytics.monthlyTotals)
+      .filter(([key]) => key !== 'Unknown')
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .slice(-6)
+      .map(([key, value]) => {
+        const [year, month] = key.split('-').map((x) => Number(x));
+        const dateObj = new Date(year, (month || 1) - 1, 1);
+        return {
+          key,
+          label: Number.isNaN(dateObj.getTime())
+            ? key
+            : dateObj.toLocaleDateString('en-US', { month: 'short' }),
+          value,
+        };
+      });
+
+    return entries;
+  }, [analytics.monthlyTotals]);
+
+  const dailyGraph = useMemo<TrendDatum[]>(() => {
+    const entries = Object.entries(analytics.dailyTotals)
+      .filter(([key]) => key !== 'Unknown')
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .slice(-7)
+      .map(([key, value]) => {
+        const dateObj = new Date(key);
+        return {
+          key,
+          label: Number.isNaN(dateObj.getTime())
+            ? key
+            : dateObj.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+          value,
+        };
+      });
+
+    return entries;
+  }, [analytics.dailyTotals]);
+
+  const trendGraph = trendGroupBy === 'daily' ? dailyGraph : monthlyGraph;
+  const trendSecondaryGraph = useMemo<TrendDatum[]>(() => {
+    return trendGraph.map((point, index, arr) => {
+      const prev = arr[index - 1]?.value ?? point.value;
+      const next = arr[index + 1]?.value ?? point.value;
+      return {
+        key: `${point.key}-smooth`,
+        label: point.label,
+        value: (prev + point.value + next) / 3,
+      };
+    });
+  }, [trendGraph]);
+
+  const maxGroupValue = Math.max(...groupChart.map((item) => item.value), 1);
+  const maxTrendValue = Math.max(
+    ...trendGraph.map((item) => item.value),
+    ...trendSecondaryGraph.map((item) => item.value),
+    1
+  );
+  const chartPlotHeight = LINE_CHART_HEIGHT - LINE_CHART_PADDING_TOP - LINE_CHART_PADDING_BOTTOM;
+
+  const trendPrimaryPoints = useMemo(() => {
+    if (!lineChartWidth || trendGraph.length === 0) return [];
+    const usableWidth = Math.max(lineChartWidth - LINE_CHART_PADDING_HORIZONTAL * 2, 1);
+    return trendGraph.map((point, index, arr) => {
+      const x = LINE_CHART_PADDING_HORIZONTAL + (arr.length === 1 ? usableWidth / 2 : (usableWidth * index) / (arr.length - 1));
+      const y = LINE_CHART_PADDING_TOP + chartPlotHeight * (1 - point.value / maxTrendValue);
+      return { ...point, x, y };
+    });
+  }, [lineChartWidth, trendGraph, chartPlotHeight, maxTrendValue]);
+
+  const trendSecondaryPoints = useMemo(() => {
+    if (!lineChartWidth || trendSecondaryGraph.length === 0) return [];
+    const usableWidth = Math.max(lineChartWidth - LINE_CHART_PADDING_HORIZONTAL * 2, 1);
+    return trendSecondaryGraph.map((point, index, arr) => {
+      const x = LINE_CHART_PADDING_HORIZONTAL + (arr.length === 1 ? usableWidth / 2 : (usableWidth * index) / (arr.length - 1));
+      const y = LINE_CHART_PADDING_TOP + chartPlotHeight * (1 - point.value / maxTrendValue);
+      return { ...point, x, y };
+    });
+  }, [lineChartWidth, trendSecondaryGraph, chartPlotHeight, maxTrendValue]);
+
+  const yAxisTicks = useMemo(() => {
+    const steps = 4;
+    return Array.from({ length: steps + 1 }, (_, index) => {
+      const ratio = index / steps;
+      const value = maxTrendValue * (1 - ratio);
+      const y = LINE_CHART_PADDING_TOP + chartPlotHeight * ratio;
+      return { value, y };
+    });
+  }, [chartPlotHeight, maxTrendValue]);
+
+  useEffect(() => {
+    if (trendGraph.length === 0) {
+      setSelectedTrendKey(null);
+      return;
+    }
+
+    const hasSelection = selectedTrendKey && trendGraph.some((item) => item.key === selectedTrendKey);
+    if (!hasSelection) setSelectedTrendKey(trendGraph[trendGraph.length - 1].key);
+  }, [trendGraph, selectedTrendKey]);
+
+  const selectedTrendPoint = useMemo(
+    () => trendGraph.find((item) => item.key === selectedTrendKey) || null,
+    [trendGraph, selectedTrendKey]
+  );
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
@@ -177,30 +350,171 @@ export default function AnalyticsScreen() {
               </View>
 
               <View style={styles.section}>
-                <Text style={styles.sectionTitle}>Top Categories</Text>
-                {topCategories.length > 0 ? (
-                  topCategories.map(([name, value]) => (
-                    <View key={name} style={styles.rowItem}>
-                      <Text style={styles.rowLabel}>{name}</Text>
-                      <Text style={styles.rowValue}>{formatMoney(value)}</Text>
+                <Text style={styles.sectionTitle}>Spending by Category</Text>
+                {categoryChart.length > 0 ? (
+                  <>
+                    <View style={styles.pieCircle}>
+                      <Text style={styles.pieCenterLabel}>Total</Text>
+                      <Text style={styles.pieCenterValue}>{formatMoney(Object.values(analytics.categoryTotals).reduce((acc, value) => acc + value, 0))}</Text>
                     </View>
-                  ))
+
+                    <View style={styles.pieTrack}>
+                      {categoryChart.map((slice, index) => (
+                        <View
+                          key={slice.key}
+                          style={[
+                            styles.pieSegment,
+                            {
+                              backgroundColor: slice.color,
+                              flex: Math.max(slice.value, 0.001),
+                              borderTopLeftRadius: index === 0 ? 10 : 0,
+                              borderBottomLeftRadius: index === 0 ? 10 : 0,
+                              borderTopRightRadius: index === categoryChart.length - 1 ? 10 : 0,
+                              borderBottomRightRadius: index === categoryChart.length - 1 ? 10 : 0,
+                            },
+                          ]}
+                        />
+                      ))}
+                    </View>
+
+                    {categoryChart.map((slice) => (
+                      <View key={`legend-${slice.key}`} style={styles.legendRow}>
+                        <View style={[styles.legendDot, { backgroundColor: slice.color }]} />
+                        <Text style={styles.legendLabel}>{slice.label}</Text>
+                        <Text style={styles.legendValue}>{slice.percentage.toFixed(1)}%</Text>
+                      </View>
+                    ))}
+                  </>
                 ) : (
                   <Text style={styles.emptyText}>No category data yet.</Text>
                 )}
               </View>
 
               <View style={styles.section}>
-                <Text style={styles.sectionTitle}>Top Groups</Text>
-                {topGroups.length > 0 ? (
-                  topGroups.map(([name, value]) => (
-                    <View key={name} style={styles.rowItem}>
-                      <Text style={styles.rowLabel}>{name}</Text>
-                      <Text style={styles.rowValue}>{formatMoney(value)}</Text>
+                <Text style={styles.sectionTitle}>Group Spending Comparison</Text>
+                {groupChart.length > 0 ? (
+                  groupChart.map((item) => (
+                    <View key={`bar-${item.key}`} style={styles.barRow}>
+                      <View style={styles.barRowTop}>
+                        <Text style={styles.barLabel} numberOfLines={1}>{item.label}</Text>
+                        <Text style={styles.barValue}>{formatMoney(item.value)}</Text>
+                      </View>
+                      <View style={styles.barTrack}>
+                        <View style={[styles.barFill, { width: `${(item.value / maxGroupValue) * 100}%` }]} />
+                      </View>
                     </View>
                   ))
                 ) : (
                   <Text style={styles.emptyText}>No group data yet.</Text>
+                )}
+              </View>
+
+              <View style={styles.section}>
+                <View style={styles.sectionHeaderRow}>
+                  <Text style={styles.sectionTitle}>Spending Trend</Text>
+                  <View style={styles.trendToggle}>
+                    <Pressable
+                      style={[styles.trendToggleBtn, trendGroupBy === 'daily' && styles.trendToggleBtnActive]}
+                      onPress={() => setTrendGroupBy('daily')}
+                    >
+                      <Text style={[styles.trendToggleText, trendGroupBy === 'daily' && styles.trendToggleTextActive]}>Days</Text>
+                    </Pressable>
+                    <Pressable
+                      style={[styles.trendToggleBtn, trendGroupBy === 'monthly' && styles.trendToggleBtnActive]}
+                      onPress={() => setTrendGroupBy('monthly')}
+                    >
+                      <Text style={[styles.trendToggleText, trendGroupBy === 'monthly' && styles.trendToggleTextActive]}>Months</Text>
+                    </Pressable>
+                  </View>
+                </View>
+                {trendGraph.length > 0 ? (
+                  <>
+                    <View style={styles.lineChartWrap}>
+                      <View style={styles.lineChartMain}>
+                        <View
+                          style={styles.lineChartArea}
+                          onLayout={(event) => setLineChartWidth(event.nativeEvent.layout.width)}
+                        >
+                          <View style={styles.yAxisOverlay}>
+                            {yAxisTicks.map((tick, index) => (
+                              <Text key={`tick-${index}`} style={[styles.yAxisLabel, { top: tick.y - 8 }]}>
+                                {formatCompactMoney(tick.value)}
+                              </Text>
+                            ))}
+                          </View>
+                          <Svg width="100%" height={LINE_CHART_HEIGHT}>
+                            {yAxisTicks.map((tick, index) => (
+                              <Line
+                                key={`grid-${index}`}
+                                x1={LINE_CHART_PADDING_HORIZONTAL}
+                                y1={tick.y}
+                                x2={Math.max(lineChartWidth - LINE_CHART_PADDING_HORIZONTAL, LINE_CHART_PADDING_HORIZONTAL)}
+                                y2={tick.y}
+                                stroke="#E8E8E8"
+                                strokeWidth={1}
+                              />
+                            ))}
+                            <Path
+                              d={buildSmoothPath(trendSecondaryPoints)}
+                              stroke="#21C17A"
+                              strokeWidth={3}
+                              fill="none"
+                            />
+                            <Path
+                              d={buildSmoothPath(trendPrimaryPoints)}
+                              stroke="#1E88E5"
+                              strokeWidth={3}
+                              fill="none"
+                            />
+                            {trendPrimaryPoints.map((point) => (
+                              <React.Fragment key={`point-${point.key}`}>
+                                <Circle
+                                  cx={point.x}
+                                  cy={point.y}
+                                  r={selectedTrendKey === point.key ? 5 : 3}
+                                  fill={selectedTrendKey === point.key ? '#FF8C69' : '#1E88E5'}
+                                />
+                                <Circle
+                                  cx={point.x}
+                                  cy={point.y}
+                                  r={12}
+                                  fill="transparent"
+                                  onPress={() => setSelectedTrendKey(point.key)}
+                                />
+                              </React.Fragment>
+                            ))}
+                          </Svg>
+                        </View>
+                        <View style={styles.xAxisRow}>
+                          {trendGraph.map((point) => (
+                            <View key={`x-${point.key}`} style={styles.xAxisItem}>
+                              <Text style={styles.graphLabel}>{point.label}</Text>
+                            </View>
+                          ))}
+                        </View>
+                        <View style={styles.chartLegendRow}>
+                          <View style={styles.chartLegendItem}>
+                            <View style={[styles.chartLegendDot, { backgroundColor: '#1E88E5' }]} />
+                            <Text style={styles.chartLegendText}>Actual</Text>
+                          </View>
+                          <View style={styles.chartLegendItem}>
+                            <View style={[styles.chartLegendDot, { backgroundColor: '#21C17A' }]} />
+                            <Text style={styles.chartLegendText}>Smoothed</Text>
+                          </View>
+                        </View>
+                        {selectedTrendPoint ? (
+                          <View style={styles.selectedPointCard}>
+                            <Text style={styles.selectedPointLabel}>Selected point</Text>
+                            <Text style={styles.selectedPointValue}>
+                              {selectedTrendPoint.label}: {formatMoney(selectedTrendPoint.value)}
+                            </Text>
+                          </View>
+                        ) : null}
+                      </View>
+                    </View>
+                  </>
+                ) : (
+                  <Text style={styles.emptyText}>No {trendGroupBy === 'daily' ? 'daily' : 'monthly'} trend data yet.</Text>
                 )}
               </View>
             </>
@@ -278,23 +592,203 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     marginBottom: 10,
   },
-  rowItem: {
+  sectionHeaderRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingVertical: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F0F0F0',
+    marginBottom: 10,
   },
-  rowLabel: {
+  trendToggle: {
+    flexDirection: 'row',
+    backgroundColor: '#F2F2F2',
+    borderRadius: 10,
+    padding: 3,
+    gap: 4,
+  },
+  trendToggleBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
+  },
+  trendToggleBtnActive: {
+    backgroundColor: '#FF8C69',
+  },
+  trendToggleText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#666',
+  },
+  trendToggleTextActive: {
+    color: '#FFFFFF',
+  },
+  pieCircle: {
+    width: 132,
+    height: 132,
+    borderRadius: 66,
+    alignSelf: 'center',
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#FFF3ED',
+    borderWidth: 10,
+    borderColor: '#FFCFBE',
+    marginBottom: 12,
+  },
+  pieCenterLabel: {
+    fontSize: 12,
+    color: '#8A6B5D',
+  },
+  pieCenterValue: {
+    marginTop: 2,
+    fontSize: 14,
+    color: '#1E1E1E',
+    fontWeight: '700',
+  },
+  pieTrack: {
+    flexDirection: 'row',
+    width: '100%',
+    height: 20,
+    borderRadius: 10,
+    overflow: 'hidden',
+    marginBottom: 12,
+  },
+  pieSegment: {
+    height: '100%',
+  },
+  legendRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 6,
+  },
+  legendDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    marginRight: 8,
+  },
+  legendLabel: {
+    flex: 1,
+    fontSize: 14,
+    color: '#444',
+  },
+  legendValue: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#1E1E1E',
+  },
+  barRow: {
+    marginBottom: 12,
+  },
+  barRowTop: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  barLabel: {
     color: '#444',
     fontSize: 14,
     flex: 1,
     marginRight: 8,
   },
-  rowValue: {
+  barValue: {
     color: '#1E1E1E',
-    fontSize: 14,
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  barTrack: {
+    height: 12,
+    borderRadius: 8,
+    backgroundColor: '#F2F2F2',
+    overflow: 'hidden',
+  },
+  barFill: {
+    height: '100%',
+    borderRadius: 8,
+    backgroundColor: '#FF8C69',
+  },
+  lineChartWrap: {
+    width: '100%',
+  },
+  yAxisLabel: {
+    position: 'absolute',
+    left: 6,
+    fontSize: 10,
+    color: '#7A7A7A',
+    fontWeight: '600',
+  },
+  yAxisOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 2,
+    pointerEvents: 'none',
+  },
+  lineChartMain: {
+    width: '100%',
+  },
+  lineChartArea: {
+    height: LINE_CHART_HEIGHT,
+    backgroundColor: '#FCFCFC',
+    borderWidth: 1,
+    borderColor: '#ECECEC',
+    borderRadius: 12,
+    overflow: 'hidden',
+  },
+  xAxisRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 8,
+    paddingHorizontal: 6,
+  },
+  xAxisItem: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  graphValue: {
+    marginTop: 8,
+    color: '#1E1E1E',
+    fontSize: 10,
+    fontWeight: '600',
+  },
+  chartLegendRow: {
+    flexDirection: 'row',
+    gap: 16,
+    marginTop: 10,
+  },
+  chartLegendItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  chartLegendDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    marginRight: 6,
+  },
+  chartLegendText: {
+    color: '#444',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  selectedPointCard: {
+    marginTop: 10,
+    backgroundColor: '#FFF3ED',
+    borderRadius: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+  },
+  selectedPointLabel: {
+    fontSize: 11,
+    color: '#8A6B5D',
+    fontWeight: '600',
+  },
+  selectedPointValue: {
+    marginTop: 2,
+    fontSize: 13,
+    color: '#1E1E1E',
+    fontWeight: '700',
+  },
+  graphLabel: {
+    color: '#555',
+    fontSize: 11,
     fontWeight: '600',
   },
   emptyText: {

@@ -22,7 +22,7 @@ export default function ExpenseDetailScreen() {
   const fetchExpenseDetails = async () => {
     try {
       const [expensesRes, usersRes] = await Promise.all([
-        api.getExpenses(),
+        api.getExpenses(currentUser?.id),
         api.getUsers()
       ]);
 
@@ -44,6 +44,12 @@ export default function ExpenseDetailScreen() {
     switch (category) {
       case 'Food': return { icon: 'https://cdn-icons-png.flaticon.com/512/3075/3075977.png', color: '#FFF9C4', name: 'Food' };
       case 'Travel': return { icon: 'https://cdn-icons-png.flaticon.com/512/201/201331.png', color: '#E8F5E9', name: 'Travel' };
+      case 'Shopping': return { icon: 'https://cdn-icons-png.flaticon.com/512/2838/2838895.png', color: '#FFF3E0', name: 'Shopping' };
+      case 'Health': return { icon: 'https://cdn-icons-png.flaticon.com/512/2966/2966488.png', color: '#FCE4EC', name: 'Health' };
+      case 'Education': return { icon: 'https://cdn-icons-png.flaticon.com/512/2436/2436636.png', color: '#E3F2FD', name: 'Education' };
+      case 'Rent': return { icon: 'https://cdn-icons-png.flaticon.com/512/1946/1946488.png', color: '#F1F8E9', name: 'Rent' };
+      case 'Utilities': return { icon: 'https://cdn-icons-png.flaticon.com/512/3079/3079167.png', color: '#FFFDE7', name: 'Utilities' };
+      case 'Transport': return { icon: 'https://cdn-icons-png.flaticon.com/512/744/744465.png', color: '#E8EAF6', name: 'Transport' };
       case 'Entertainment': return { icon: 'https://cdn-icons-png.flaticon.com/512/3163/3163478.png', color: '#F3E5F5', name: 'Entertainment' };
       case 'Bills': return { icon: 'https://cdn-icons-png.flaticon.com/512/1051/1051275.png', color: '#FFF3E0', name: 'Bills' };
       case 'Others': return { icon: 'https://cdn-icons-png.flaticon.com/512/570/570223.png', color: '#F5F5F5', name: 'Others' };

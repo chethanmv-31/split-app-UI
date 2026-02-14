@@ -22,7 +22,7 @@ export default function UserDetailScreen() {
   const fetchData = async () => {
     setLoading(true);
     try {
-      const [usersRes, expensesRes] = await Promise.all([api.getUsers(), api.getExpenses()]);
+      const [usersRes, expensesRes] = await Promise.all([api.getUsers(), api.getExpenses(currentUser?.id)]);
       if (usersRes.success && expensesRes.success) {
         const foundUser = usersRes.data.find((u: any) => u.id === userId);
         setUser(foundUser);

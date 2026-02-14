@@ -6,7 +6,6 @@ import { ComponentProps } from 'react';
 import { OpaqueColorValue, type StyleProp, type TextStyle } from 'react-native';
 
 type IconMapping = Record<SymbolViewProps['name'], ComponentProps<typeof MaterialIcons>['name']>;
-type IconSymbolName = keyof typeof MAPPING;
 
 /**
  * Add your SF Symbols to Material Icons mappings here.
@@ -15,14 +14,40 @@ type IconSymbolName = keyof typeof MAPPING;
  */
 const MAPPING = {
   'house.fill': 'home',
+  'cart.fill': 'shopping-cart',
   'plus': 'add',
+  'plus.circle.fill': 'add-circle',
   'clock.fill': 'schedule',
   'chart.bar.fill': 'bar-chart',
+  'chart.pie.fill': 'pie-chart',
   'person.fill': 'person',
+  'person.2.fill': 'groups',
+  'person.3.fill': 'groups',
+  'person.badge.plus': 'person-add',
   'dollarsign.circle.fill': 'attach-money',
   'paperplane.fill': 'send',
+  'calendar': 'calendar-today',
+  'magnifyingglass': 'search',
+  'xmark': 'close',
+  'xmark.circle.fill': 'cancel',
+  'checkmark': 'check',
+  'phone.fill': 'phone',
+  'chevron.left': 'chevron-left',
   'chevron.left.forwardslash.chevron.right': 'code',
   'chevron.right': 'chevron-right',
+  'chevron.up': 'keyboard-arrow-up',
+  'chevron.down': 'keyboard-arrow-down',
+  'pencil': 'edit',
+  'fork.knife': 'restaurant',
+  'airplane': 'flight',
+  'bag.fill': 'local-mall',
+  'heart.text.square.fill': 'favorite',
+  'book.fill': 'menu-book',
+  'bolt.fill': 'flash-on',
+  'car.fill': 'directions-car',
+  'tv.fill': 'tv',
+  'doc.plaintext.fill': 'description',
+  'ellipsis.circle.fill': 'more-horiz',
 } as IconMapping;
 
 /**
@@ -36,11 +61,18 @@ export function IconSymbol({
   color,
   style,
 }: {
-  name: IconSymbolName;
+  name: SymbolViewProps['name'];
   size?: number;
   color: string | OpaqueColorValue;
   style?: StyleProp<TextStyle>;
   weight?: SymbolWeight;
 }) {
-  return <MaterialIcons color={color} size={size} name={MAPPING[name]} style={style} />;
+  return (
+    <MaterialIcons
+      color={color}
+      size={size}
+      name={MAPPING[name] ?? 'help-outline'}
+      style={style}
+    />
+  );
 }

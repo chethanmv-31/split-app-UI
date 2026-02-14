@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { View, Text, StyleSheet, TextInput, TouchableOpacity, ScrollView, Alert, ActivityIndicator, StatusBar, Platform, KeyboardAvoidingView } from 'react-native';
+import { View, Text, StyleSheet, TextInput, TouchableOpacity, ScrollView, Alert, ActivityIndicator, StatusBar, Platform, KeyboardAvoidingView, Modal, Pressable } from 'react-native';
 import { useSession } from '../../ctx';
 import { api } from '../../services/api';
 import { Colors } from '../../constants/theme';
@@ -37,6 +37,7 @@ export default function AddScreen() {
     const [isPayerDropdownOpen, setIsPayerDropdownOpen] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
     const [inviting, setInviting] = useState(false);
+    const [isCategoryDrawerOpen, setIsCategoryDrawerOpen] = useState(false);
     const scrollViewRef = useRef<ScrollView>(null);
     const [splitSectionY, setSplitSectionY] = useState(0);
 
@@ -112,25 +113,83 @@ export default function AddScreen() {
         { name: 'General', icon: 'cart.fill' },
         { name: 'Food', icon: 'fork.knife' },
         { name: 'Travel', icon: 'airplane' },
+        { name: 'Shopping', icon: 'bag.fill' },
+        { name: 'Health', icon: 'heart.text.square.fill' },
+        { name: 'Education', icon: 'book.fill' },
+        { name: 'Rent', icon: 'house.fill' },
+        { name: 'Utilities', icon: 'bolt.fill' },
+        { name: 'Transport', icon: 'car.fill' },
         { name: 'Entertainment', icon: 'tv.fill' },
         { name: 'Bills', icon: 'doc.plaintext.fill' },
         { name: 'Others', icon: 'ellipsis.circle.fill' }
     ];
-
+    const quickCategories = categories.slice(0, 7);
+    const equalShare = useMemo(() => {
+        const total = parseFloat(amount) || 0;
+        if (splitType !== 'EQUAL' || total <= 0 || selectedUsers.length === 0) {
+            return 0;
+        }
+        return total / selectedUsers.length;
+    }, [amount, splitType, selectedUsers.length]);
     useEffect(() => {
         fetchUsers();
-    }, []);
+    }, [contacts, isGroupExpense, currentUser?.id, defaultSelectedUsers]);
 
     const fetchUsers = async () => {
-        const result = await api.getUsers();
-        if (result.success) {
-            setAllUsers(result.data);
-            const groupMembersSet = new Set(defaultSelectedUsers);
-            const filteredUsers = result.data.filter(
-                (u: any) => u.id !== currentUser?.id && (!isGroupExpense || groupMembersSet.has(u.id))
-            );
-            setUsers(filteredUsers);
+        const [usersResult, expensesResult] = await Promise.all([
+            api.getUsers(),
+            api.getExpenses(currentUser?.id),
+        ]);
+
+        if (!usersResult.success) {
+            return;
         }
+
+        const allFetchedUsers = usersResult.data;
+        setAllUsers(allFetchedUsers);
+
+        const groupMembersSet = new Set(defaultSelectedUsers);
+        if (isGroupExpense) {
+            const filteredGroupUsers = allFetchedUsers.filter(
+                (u: any) => u.id !== currentUser?.id && groupMembersSet.has(u.id)
+            );
+            setUsers(filteredGroupUsers);
+            return;
+        }
+
+        const connectedUserIds = new Set<string>();
+        if (expensesResult.success) {
+            expensesResult.data.forEach((expense: any) => {
+                (expense.splitBetween || []).forEach((userId: string) => {
+                    if (userId && userId !== currentUser?.id) {
+                        connectedUserIds.add(userId);
+                    }
+                });
+                if (expense.paidBy && expense.paidBy !== currentUser?.id) {
+                    connectedUserIds.add(expense.paidBy);
+                }
+            });
+        }
+
+        const contactLinkedUserIds = new Set<string>();
+        contacts.forEach((contact) => {
+            const contactPhone = normalizePhone(contact.phoneNumber);
+            if (!contactPhone) return;
+
+            const matchedUser = allFetchedUsers.find(
+                (u: any) => normalizePhone(u.mobile) === contactPhone
+            );
+            if (matchedUser?.id && matchedUser.id !== currentUser?.id) {
+                contactLinkedUserIds.add(matchedUser.id);
+            }
+        });
+
+        const filteredUsers = allFetchedUsers.filter(
+            (u: any) =>
+                u.id !== currentUser?.id &&
+                (connectedUserIds.has(u.id) || contactLinkedUserIds.has(u.id))
+        );
+        setUsers(filteredUsers);
     };
 
     const toggleUserSelection = (userId: string) => {
@@ -316,7 +375,7 @@ export default function AddScreen() {
                     ref={scrollViewRef}
                     style={styles.content}
                     showsVerticalScrollIndicator={false}
-                    contentContainerStyle={{ paddingBottom: 100 }}
+                    contentContainerStyle={{ paddingBottom: 24 }}
                     keyboardShouldPersistTaps="handled"
                 >
                     <View style={styles.card}>
@@ -461,16 +520,27 @@ export default function AddScreen() {
                                             )}
                                         </TouchableOpacity>
 
-                                        {splitType === 'UNEQUAL' && isSelected && !isContact && (
-                                            <View style={styles.individualInputWrapper}>
+                                        {isSelected && !isContact && (
+                                            <View
+                                                style={[
+                                                    styles.individualInputWrapper,
+                                                    splitType === 'EQUAL' && styles.equalInlineWrapper,
+                                                ]}
+                                            >
                                                 <Text style={styles.miniCurrency}>₹</Text>
-                                                <TextInput
-                                                    style={styles.individualInput}
-                                                    placeholder="0"
-                                                    keyboardType="numeric"
-                                                    value={individualAmounts[user.id] || ''}
-                                                    onChangeText={(val) => handleAmountChange(user.id, val)}
-                                                />
+                                                {splitType === 'UNEQUAL' ? (
+                                                    <TextInput
+                                                        style={styles.individualInput}
+                                                        placeholder="0"
+                                                        keyboardType="numeric"
+                                                        value={individualAmounts[user.id] || ''}
+                                                        onChangeText={(val) => handleAmountChange(user.id, val)}
+                                                    />
+                                                ) : (
+                                                    <Text style={styles.equalInlineAmount}>
+                                                        {(equalShare || 0).toFixed(2)}
+                                                    </Text>
+                                                )}
                                             </View>
                                         )}
                                     </View>
@@ -563,7 +633,7 @@ export default function AddScreen() {
 
                     <Text style={styles.sectionTitle}>Category</Text>
                     <View style={styles.categoryGrid}>
-                        {categories.map((cat) => (
+                        {quickCategories.map((cat) => (
                             <TouchableOpacity
                                 key={cat.name}
                                 style={[
@@ -585,9 +655,27 @@ export default function AddScreen() {
                                 <Text style={[
                                     styles.categoryText,
                                     category === cat.name && styles.categoryTextSelected
-                                ]}>{cat.name}</Text>
+                                ]}
+                                    numberOfLines={1}
+                                    ellipsizeMode="tail"
+                                >
+                                    {cat.name}
+                                </Text>
                             </TouchableOpacity>
                         ))}
+                        <TouchableOpacity
+                            style={[styles.categoryItem, styles.moreCategoryItem]}
+                            onPress={() => setIsCategoryDrawerOpen(true)}
+                        >
+                            <View style={styles.categoryIconWrapper}>
+                                <IconSymbol
+                                    size={24}
+                                    name="ellipsis.circle.fill"
+                                    color="#FF8C69"
+                                />
+                            </View>
+                            <Text style={styles.categoryText} numberOfLines={1} ellipsizeMode="tail">More</Text>
+                        </TouchableOpacity>
                     </View>
 
                     <TouchableOpacity
@@ -604,9 +692,67 @@ export default function AddScreen() {
                             </>
                         )}
                     </TouchableOpacity>
-                    <View style={{ height: 40 }} />
+                    <View style={{ height: 12 }} />
                 </ScrollView>
             </KeyboardAvoidingView>
+
+            <Modal
+                visible={isCategoryDrawerOpen}
+                transparent
+                animationType="slide"
+                onRequestClose={() => setIsCategoryDrawerOpen(false)}
+            >
+                <View style={styles.drawerOverlay}>
+                    <Pressable style={styles.drawerBackdrop} onPress={() => setIsCategoryDrawerOpen(false)} />
+                    <View style={styles.categoryDrawer}>
+                        <View style={styles.drawerHandle} />
+                        <View style={styles.drawerHeader}>
+                            <Text style={styles.drawerTitle}>All Categories</Text>
+                            <TouchableOpacity onPress={() => setIsCategoryDrawerOpen(false)}>
+                                <IconSymbol size={24} name="xmark.circle.fill" color="#999" />
+                            </TouchableOpacity>
+                        </View>
+
+                        <ScrollView showsVerticalScrollIndicator={false}>
+                            <View style={styles.drawerCategoryGrid}>
+                                {categories.map((cat) => (
+                                    <TouchableOpacity
+                                        key={`drawer-${cat.name}`}
+                                        style={[
+                                            styles.categoryItem,
+                                            category === cat.name && styles.categoryItemSelected
+                                        ]}
+                                        onPress={() => {
+                                            setCategory(cat.name);
+                                            setIsCategoryDrawerOpen(false);
+                                        }}
+                                    >
+                                        <View style={[
+                                            styles.categoryIconWrapper,
+                                            category === cat.name && styles.categoryIconWrapperSelected
+                                        ]}>
+                                            <IconSymbol
+                                                size={24}
+                                                name={cat.icon as any}
+                                                color={category === cat.name ? 'white' : '#FF8C69'}
+                                            />
+                                        </View>
+                                        <Text style={[
+                                            styles.categoryText,
+                                            category === cat.name && styles.categoryTextSelected
+                                        ]}
+                                            numberOfLines={1}
+                                            ellipsizeMode="tail"
+                                        >
+                                            {cat.name}
+                                        </Text>
+                                    </TouchableOpacity>
+                                ))}
+                            </View>
+                        </ScrollView>
+                    </View>
+                </View>
+            </Modal>
         </SafeAreaView>
     );
 }
@@ -743,10 +889,11 @@ const styles = StyleSheet.create({
         marginTop: 15,
     },
     categoryItem: {
-        width: '30%',
+        width: '23%',
         backgroundColor: 'white',
         borderRadius: 20,
-        padding: 12,
+        paddingVertical: 10,
+        paddingHorizontal: 8,
         alignItems: 'center',
         marginBottom: 15,
         shadowColor: '#000',
@@ -758,25 +905,71 @@ const styles = StyleSheet.create({
     categoryItemSelected: {
         backgroundColor: '#FF8C69',
     },
+    moreCategoryItem: {
+        borderWidth: 1,
+        borderColor: '#FFE0D6',
+    },
     categoryIconWrapper: {
-        width: 45,
-        height: 45,
+        width: 40,
+        height: 40,
         borderRadius: 15,
         backgroundColor: '#FFF0ED',
         justifyContent: 'center',
         alignItems: 'center',
-        marginBottom: 8,
+        marginBottom: 6,
     },
     categoryIconWrapperSelected: {
         backgroundColor: 'rgba(255,255,255,0.2)',
     },
     categoryText: {
-        fontSize: 12,
+        fontSize: 11,
         fontWeight: '600',
         color: '#666',
+        textAlign: 'center',
     },
     categoryTextSelected: {
         color: 'white',
+    },
+    drawerOverlay: {
+        flex: 1,
+        justifyContent: 'flex-end',
+    },
+    drawerBackdrop: {
+        ...StyleSheet.absoluteFillObject,
+        backgroundColor: 'rgba(0,0,0,0.35)',
+    },
+    categoryDrawer: {
+        height: '50%',
+        backgroundColor: '#F8F8F8',
+        borderTopLeftRadius: 24,
+        borderTopRightRadius: 24,
+        paddingHorizontal: 20,
+        paddingTop: 10,
+    },
+    drawerHandle: {
+        width: 50,
+        height: 5,
+        borderRadius: 3,
+        backgroundColor: '#DDD',
+        alignSelf: 'center',
+        marginBottom: 12,
+    },
+    drawerHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        marginBottom: 12,
+    },
+    drawerTitle: {
+        fontSize: 18,
+        fontWeight: '700',
+        color: '#1E1E1E',
+    },
+    drawerCategoryGrid: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        justifyContent: 'space-between',
+        paddingBottom: 20,
     },
     usersList: {
         flexDirection: 'row',
@@ -866,6 +1059,10 @@ const styles = StyleSheet.create({
         borderWidth: 1,
         borderColor: '#EEE',
     },
+    equalInlineWrapper: {
+        backgroundColor: '#FFF0E9',
+        borderColor: '#FFD7C8',
+    },
     miniCurrency: {
         fontSize: 10,
         fontWeight: '700',
@@ -878,6 +1075,14 @@ const styles = StyleSheet.create({
         width: 45,
         color: '#333',
         textAlign: 'center',
+    },
+    equalInlineAmount: {
+        fontSize: 12,
+        paddingVertical: 4,
+        width: 45,
+        color: '#FF8C69',
+        textAlign: 'center',
+        fontWeight: '700',
     },
     addButton: {
         backgroundColor: '#FF8C69',
