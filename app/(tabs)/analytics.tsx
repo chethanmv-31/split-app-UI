@@ -74,7 +74,14 @@ const initialState: AnalyticsState = {
 
 export default function AnalyticsScreen() {
   const { session } = useSession();
-  const currentUser = session ? JSON.parse(session) : null;
+  const currentUser = useMemo(() => {
+    if (!session) return null;
+    try {
+      return JSON.parse(session);
+    } catch {
+      return null;
+    }
+  }, [session]);
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);

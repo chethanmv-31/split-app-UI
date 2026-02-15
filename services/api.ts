@@ -225,7 +225,13 @@ export const api = {
 
     async getUsers() {
         try {
-            const response = await fetch(`${API_URL}/users`);
+            const response = await fetch(`${API_URL}/users`, {
+                headers: withAuthHeaders(),
+            });
+            if (response.status === 401) {
+                notifyUnauthorized();
+                return { success: false, message: 'Session expired. Please sign in again.' };
+            }
             if (!response.ok) {
                 throw new Error('Failed to fetch users');
             }
