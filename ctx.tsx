@@ -1,4 +1,4 @@
-import React from 'react';
+﻿import React from 'react';
 import { useStorageState } from './hooks/useStorageState';
 import { api } from './services/api';
 
@@ -144,3 +144,4 @@ export function SessionProvider(props: React.PropsWithChildren) {
         </AuthContext.Provider>
     );
 }
+
