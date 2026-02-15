@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, StatusBar, ActivityIndicator, Image } from 'react-native';
+import React, { useState, useEffect, useCallback } from 'react';
+import { Alert, View, Text, StyleSheet, ScrollView, TouchableOpacity, StatusBar, ActivityIndicator, Image } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { api } from '../../services/api';
 import { useSession } from '../../ctx';
@@ -24,6 +24,7 @@ export default function ExpenseDetailScreen() {
   const [expense, setExpense] = useState<any>(null);
   const [users, setUsers] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [deleting, setDeleting] = useState(false);
 
   const parsedExpenseId = Array.isArray(expenseId) ? expenseId[0] : expenseId;
   const parsedReturnToGroupId = Array.isArray(returnToGroupId) ? returnToGroupId[0] : returnToGroupId;
@@ -33,6 +34,12 @@ export default function ExpenseDetailScreen() {
   useEffect(() => {
     fetchExpenseDetails();
   }, [parsedExpenseId]);
+
+  useFocusEffect(
+    useCallback(() => {
+      fetchExpenseDetails();
+    }, [parsedExpenseId, parsedReturnToGroupId, currentUser?.id]),
+  );
 
   const handleBack = () => {
     if (parsedReturnToGroupId) {
@@ -53,6 +60,7 @@ export default function ExpenseDetailScreen() {
   };
 
   const fetchExpenseDetails = async () => {
+    setLoading(true);
     try {
       const expensesRequest = parsedReturnToGroupId
         ? api.getExpenses(undefined, parsedReturnToGroupId)
@@ -65,13 +73,14 @@ export default function ExpenseDetailScreen() {
 
       if (expensesRes.success && usersRes.success) {
         const foundExpense = expensesRes.data.find((e: any) => e.id === parsedExpenseId);
-        if (foundExpense) {
-          setExpense(foundExpense);
-          setUsers(usersRes.data);
-        }
+        setExpense(foundExpense || null);
+        setUsers(usersRes.data || []);
+      } else {
+        setExpense(null);
       }
     } catch (error) {
       console.error('Error fetching expense details:', error);
+      setExpense(null);
     } finally {
       setLoading(false);
     }
@@ -131,6 +140,41 @@ export default function ExpenseDetailScreen() {
     }
   };
 
+  const handleDeleteExpense = async () => {
+    if (!expense || deleting) return;
+    Alert.alert('Delete expense', 'This action cannot be undone.', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: async () => {
+          setDeleting(true);
+          const result = await api.deleteExpense(expense.id);
+          setDeleting(false);
+          if (!result.success) {
+            Alert.alert('Error', result.message || 'Failed to delete expense');
+            return;
+          }
+          Alert.alert('Deleted', 'Expense deleted successfully', [{ text: 'OK', onPress: handleBack }]);
+        },
+      },
+    ]);
+  };
+
+  const handleEditExpense = () => {
+    if (!expense) return;
+    router.push({
+      pathname: '/(tabs)/add',
+      params: {
+        editExpenseId: expense.id,
+        source: parsedReturnToGroupId ? 'group' : 'personal',
+        groupId: parsedReturnToGroupId,
+        groupName: parsedReturnToGroupName,
+        groupMembers: parsedReturnToGroupMembers,
+      },
+    });
+  };
+
   if (loading) {
     return (
       <SafeAreaView style={styles.container} edges={['top']}>
@@ -179,7 +223,18 @@ export default function ExpenseDetailScreen() {
           <IconSymbol size={24} name="chevron.left" color="white" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Expense Details</Text>
-        <View style={{ width: 40 }} />
+        {expense?.paidBy === currentUser?.id ? (
+          <View style={styles.headerActions}>
+            <TouchableOpacity onPress={handleEditExpense} style={styles.backButton}>
+              <IconSymbol size={20} name="pencil" color="white" />
+            </TouchableOpacity>
+            <TouchableOpacity onPress={handleDeleteExpense} style={styles.backButton} disabled={deleting}>
+              {deleting ? <ActivityIndicator size="small" color="white" /> : <IconSymbol size={20} name="trash" color="white" />}
+            </TouchableOpacity>
+          </View>
+        ) : (
+          <View style={{ width: 40 }} />
+        )}
       </View>
 
       <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
@@ -260,6 +315,13 @@ export default function ExpenseDetailScreen() {
           ))}
         </View>
 
+        {expense.receiptUrl ? (
+          <View style={styles.splitCard}>
+            <Text style={styles.sectionTitle}>Receipt</Text>
+            <Image source={{ uri: expense.receiptUrl }} style={styles.receiptImage} resizeMode="cover" />
+          </View>
+        ) : null}
+
         <View style={{ height: 50 }} />
       </ScrollView>
     </SafeAreaView>
@@ -277,6 +339,10 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingHorizontal: 20,
     paddingVertical: 15,
+  },
+  headerActions: {
+    flexDirection: 'row',
+    gap: 8,
   },
   backButton: {
     width: 40,
@@ -447,5 +513,11 @@ const styles = StyleSheet.create({
   listDivider: {
     height: 1,
     backgroundColor: '#F5F5F5',
+  },
+  receiptImage: {
+    width: '100%',
+    height: 220,
+    borderRadius: 14,
+    backgroundColor: '#EEE',
   },
 });

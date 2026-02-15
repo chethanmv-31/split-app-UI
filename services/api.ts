@@ -201,6 +201,47 @@ export const api = {
         }
     },
 
+    async updateExpense(expenseId: string, updates: any) {
+        try {
+            const response = await fetch(`${API_URL}/expenses/${expenseId}`, {
+                method: 'PATCH',
+                headers: withAuthHeaders({
+                    'Content-Type': 'application/json',
+                }),
+                body: JSON.stringify(updates),
+            });
+            if (response.status === 401) {
+                notifyUnauthorized();
+                return { success: false, message: 'Session expired. Please sign in again.' };
+            }
+            if (!response.ok) {
+                throw new Error(await parseError(response, 'Failed to update expense'));
+            }
+            return { success: true, data: await response.json() };
+        } catch (error: any) {
+            return { success: false, message: error.message || 'Network error' };
+        }
+    },
+
+    async deleteExpense(expenseId: string) {
+        try {
+            const response = await fetch(`${API_URL}/expenses/${expenseId}`, {
+                method: 'DELETE',
+                headers: withAuthHeaders(),
+            });
+            if (response.status === 401) {
+                notifyUnauthorized();
+                return { success: false, message: 'Session expired. Please sign in again.' };
+            }
+            if (!response.ok) {
+                throw new Error(await parseError(response, 'Failed to delete expense'));
+            }
+            return { success: true, data: await response.json() };
+        } catch (error: any) {
+            return { success: false, message: error.message || 'Network error' };
+        }
+    },
+
     async getExpenses(_userId?: string, groupId?: string) {
         try {
             const params = new URLSearchParams();
@@ -216,6 +257,72 @@ export const api = {
             }
             if (!response.ok) {
                 throw new Error('Failed to fetch expenses');
+            }
+            return { success: true, data: await response.json() };
+        } catch (error: any) {
+            return { success: false, message: error.message || 'Network error' };
+        }
+    },
+
+    async getAnalyticsSummary(options?: { groupId?: string; timeFilter?: '30D' | '90D' | 'ALL' }) {
+        try {
+            const params = new URLSearchParams();
+            if (options?.groupId) params.set('groupId', options.groupId);
+            if (options?.timeFilter) params.set('timeFilter', options.timeFilter);
+            const query = params.toString();
+            const url = `${API_URL}/expenses/analytics/summary${query ? `?${query}` : ''}`;
+            const response = await fetch(url, {
+                headers: withAuthHeaders(),
+            });
+            if (response.status === 401) {
+                notifyUnauthorized();
+                return { success: false, message: 'Session expired. Please sign in again.' };
+            }
+            if (!response.ok) {
+                throw new Error(await parseError(response, 'Failed to fetch analytics'));
+            }
+            return { success: true, data: await response.json() };
+        } catch (error: any) {
+            return { success: false, message: error.message || 'Network error' };
+        }
+    },
+
+    async createSettlement(payload: { fromUserId: string; toUserId: string; amount: number; groupId?: string; settledAt?: string; note?: string }) {
+        try {
+            const response = await fetch(`${API_URL}/expenses/settlements`, {
+                method: 'POST',
+                headers: withAuthHeaders({
+                    'Content-Type': 'application/json',
+                }),
+                body: JSON.stringify(payload),
+            });
+            if (response.status === 401) {
+                notifyUnauthorized();
+                return { success: false, message: 'Session expired. Please sign in again.' };
+            }
+            if (!response.ok) {
+                throw new Error(await parseError(response, 'Failed to create settlement'));
+            }
+            return { success: true, data: await response.json() };
+        } catch (error: any) {
+            return { success: false, message: error.message || 'Network error' };
+        }
+    },
+
+    async getSettlements(groupId?: string) {
+        try {
+            const params = new URLSearchParams();
+            if (groupId) params.set('groupId', groupId);
+            const query = params.toString();
+            const response = await fetch(`${API_URL}/expenses/settlements${query ? `?${query}` : ''}`, {
+                headers: withAuthHeaders(),
+            });
+            if (response.status === 401) {
+                notifyUnauthorized();
+                return { success: false, message: 'Session expired. Please sign in again.' };
+            }
+            if (!response.ok) {
+                throw new Error(await parseError(response, 'Failed to fetch settlements'));
             }
             return { success: true, data: await response.json() };
         } catch (error: any) {

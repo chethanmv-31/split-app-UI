@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { View, Text, StyleSheet, TextInput, TouchableOpacity, ScrollView, Alert, ActivityIndicator, StatusBar, Platform, KeyboardAvoidingView, Modal, Pressable } from 'react-native';
+import { View, Text, StyleSheet, TextInput, TouchableOpacity, ScrollView, Alert, ActivityIndicator, StatusBar, Platform, KeyboardAvoidingView, Modal, Pressable, Image } from 'react-native';
 import { useSession } from '../../ctx';
 import { api } from '../../services/api';
 import { Colors } from '../../constants/theme';
@@ -8,6 +8,7 @@ import { IconSymbol } from '@/components/ui/icon-symbol';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useCallback } from 'react';
 import { useLocalSearchParams } from 'expo-router';
+import * as ImagePicker from 'expo-image-picker';
 // ...existing code...
 import { useContacts } from '../../hooks/useContacts';
 
@@ -15,11 +16,12 @@ export default function AddScreen() {
     const { session } = useSession();
     const router = useRouter();
     const currentUser = session ? JSON.parse(session) : null;
-    const { source, groupId, groupName, groupMembers } = useLocalSearchParams<{
+    const { source, groupId, groupName, groupMembers, editExpenseId } = useLocalSearchParams<{
         source?: string | string[];
         groupId?: string | string[];
         groupName?: string | string[];
         groupMembers?: string | string[];
+        editExpenseId?: string | string[];
     }>();
     const { contacts, hasPermission } = useContacts();
 
@@ -38,6 +40,9 @@ export default function AddScreen() {
     const [searchQuery, setSearchQuery] = useState('');
     const [inviting, setInviting] = useState(false);
     const [isCategoryDrawerOpen, setIsCategoryDrawerOpen] = useState(false);
+    const [expenseDate, setExpenseDate] = useState(new Date().toISOString());
+    const [prefillDone, setPrefillDone] = useState(false);
+    const [receiptUrl, setReceiptUrl] = useState('');
     const scrollViewRef = useRef<ScrollView>(null);
     const [splitSectionY, setSplitSectionY] = useState(0);
 
@@ -45,6 +50,8 @@ export default function AddScreen() {
     const parsedGroupId = Array.isArray(groupId) ? groupId[0] : groupId;
     const parsedGroupName = Array.isArray(groupName) ? groupName[0] : groupName;
     const parsedGroupMembers = Array.isArray(groupMembers) ? groupMembers[0] : groupMembers;
+    const parsedEditExpenseId = Array.isArray(editExpenseId) ? editExpenseId[0] : editExpenseId;
+    const isEditMode = Boolean(parsedEditExpenseId);
     const isGroupExpense = parsedSource === 'group' && Boolean(parsedGroupId);
     const groupMemberIds = useMemo(
         () =>
@@ -95,6 +102,9 @@ export default function AddScreen() {
         setIsPayerDropdownOpen(false);
         setSearchQuery('');
         setInvitedUsersMap({});
+        setExpenseDate(new Date().toISOString());
+        setPrefillDone(false);
+        setReceiptUrl('');
         if (currentUser?.id) {
             setPaidBy(currentUser.id);
             setSelectedUsers(defaultSelectedUsers);
@@ -103,8 +113,10 @@ export default function AddScreen() {
 
     useFocusEffect(
         useCallback(() => {
-            resetForm();
-        }, [resetForm])
+            if (!isEditMode) {
+                resetForm();
+            }
+        }, [isEditMode, resetForm])
     );
 
     // ...existing code...
@@ -134,6 +146,38 @@ export default function AddScreen() {
     useEffect(() => {
         fetchUsers();
     }, [contacts, isGroupExpense, currentUser?.id, defaultSelectedUsers]);
+
+    useEffect(() => {
+        const loadEditExpense = async () => {
+            if (!isEditMode || !parsedEditExpenseId || !currentUser?.id || prefillDone) return;
+            const expensesRes = await api.getExpenses(currentUser.id, parsedGroupId || undefined);
+            if (!expensesRes.success) return;
+
+            const existingExpense = expensesRes.data.find((e: any) => e.id === parsedEditExpenseId);
+            if (!existingExpense) return;
+
+            setTitle(existingExpense.title || '');
+            setAmount(String(existingExpense.amount || ''));
+            setCategory(existingExpense.category || 'General');
+            setSplitType(existingExpense.splitType || 'EQUAL');
+            setSelectedUsers(Array.isArray(existingExpense.splitBetween) ? existingExpense.splitBetween : []);
+            setPaidBy(existingExpense.paidBy || currentUser.id);
+            setExpenseDate(existingExpense.date || new Date().toISOString());
+            setReceiptUrl(existingExpense.receiptUrl || '');
+            if (existingExpense.splitType === 'UNEQUAL' && Array.isArray(existingExpense.splitDetails)) {
+                const nextAmounts = existingExpense.splitDetails.reduce((acc: Record<string, string>, item: any) => {
+                    acc[item.userId] = String(item.amount ?? '');
+                    return acc;
+                }, {});
+                setIndividualAmounts(nextAmounts);
+            } else {
+                setIndividualAmounts({});
+            }
+            setPrefillDone(true);
+        };
+
+        loadEditExpense();
+    }, [currentUser?.id, isEditMode, parsedEditExpenseId, parsedGroupId, prefillDone]);
 
     const fetchUsers = async () => {
         const [usersResult, expensesResult] = await Promise.all([
@@ -278,6 +322,34 @@ export default function AddScreen() {
         setInviting(false);
     };
 
+    const handlePickReceiptImage = async () => {
+        const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (permission.status !== 'granted') {
+            Alert.alert('Permission required', 'Please allow media library access to pick a receipt image.');
+            return;
+        }
+
+        const result = await ImagePicker.launchImageLibraryAsync({
+            mediaTypes: ImagePicker.MediaTypeOptions.Images,
+            allowsEditing: true,
+            quality: 0.4,
+            base64: true,
+        });
+
+        if (result.canceled || !result.assets?.length) return;
+        const asset = result.assets[0];
+        const nextReceipt = asset.base64
+            ? `data:${asset.mimeType || 'image/jpeg'};base64,${asset.base64}`
+            : asset.uri;
+
+        if (nextReceipt.length > 10_000_000) {
+            Alert.alert('Image too large', 'Please pick a smaller receipt image.');
+            return;
+        }
+
+        setReceiptUrl(nextReceipt);
+    };
+
     const handleAddExpense = async () => {
         if (!title || !amount) {
             Alert.alert('Error', 'Please enter title and amount');
@@ -301,8 +373,9 @@ export default function AddScreen() {
         const expenseData: any = {
             title,
             amount: parseFloat(amount),
-            date: new Date().toISOString(),
+            date: expenseDate,
             category,
+            receiptUrl: receiptUrl || undefined,
             paidBy: paidBy || currentUser?.id,
             splitType,
             splitBetween,
@@ -324,11 +397,13 @@ export default function AddScreen() {
             }));
         }
 
-        const result = await api.addExpense(expenseData, currentUser?.id);
+        const result = isEditMode && parsedEditExpenseId
+            ? await api.updateExpense(parsedEditExpenseId, expenseData)
+            : await api.addExpense(expenseData, currentUser?.id);
 
         if (result.success) {
             setLoading(false);
-            Alert.alert('Success', 'Expense added successfully', [
+            Alert.alert('Success', isEditMode ? 'Expense updated successfully' : 'Expense added successfully', [
                 {
                     text: 'OK',
                     onPress: () => {
@@ -350,7 +425,7 @@ export default function AddScreen() {
             resetForm();
         } else {
             setLoading(false);
-            Alert.alert('Error', result.message || 'Failed to add expense');
+            Alert.alert('Error', result.message || (isEditMode ? 'Failed to update expense' : 'Failed to add expense'));
         }
     };
 
@@ -362,7 +437,7 @@ export default function AddScreen() {
                     <IconSymbol size={24} name="chevron.left" color="white" />
                 </TouchableOpacity>
                 <Text style={styles.headerTitle}>
-                    {isGroupExpense ? `Add ${parsedGroupName || 'Group'} Expense` : 'Add Expense'}
+                    {isEditMode ? 'Edit Expense' : (isGroupExpense ? `Add ${parsedGroupName || 'Group'} Expense` : 'Add Expense')}
                 </Text>
                 <View style={styles.headerSpacer} />
             </View>
@@ -678,6 +753,24 @@ export default function AddScreen() {
                         </TouchableOpacity>
                     </View>
 
+                    <View style={styles.receiptSection}>
+                        <View style={styles.receiptHeaderRow}>
+                            <Text style={styles.sectionTitle}>Receipt (Optional)</Text>
+                            {receiptUrl ? (
+                                <TouchableOpacity onPress={() => setReceiptUrl('')}>
+                                    <Text style={styles.removeReceiptText}>Remove</Text>
+                                </TouchableOpacity>
+                            ) : null}
+                        </View>
+                        <TouchableOpacity style={styles.receiptButton} onPress={handlePickReceiptImage}>
+                            <IconSymbol size={18} name="photo.on.rectangle" color="#FF8C69" />
+                            <Text style={styles.receiptButtonText}>{receiptUrl ? 'Change Receipt' : 'Upload Receipt'}</Text>
+                        </TouchableOpacity>
+                        {receiptUrl ? (
+                            <Image source={{ uri: receiptUrl }} style={styles.receiptPreview} resizeMode="cover" />
+                        ) : null}
+                    </View>
+
                     <TouchableOpacity
                         style={[styles.addButton, (!title || !amount || loading) && styles.addButtonDisabled]}
                         onPress={handleAddExpense}
@@ -687,7 +780,7 @@ export default function AddScreen() {
                             <ActivityIndicator color="#fff" />
                         ) : (
                             <>
-                                <Text style={styles.addButtonText}>Save Expense</Text>
+                                <Text style={styles.addButtonText}>{isEditMode ? 'Update Expense' : 'Save Expense'}</Text>
                                 <IconSymbol size={20} name="paperplane.fill" color="white" style={{ marginLeft: 8 }} />
                             </>
                         )}
@@ -1247,5 +1340,43 @@ const styles = StyleSheet.create({
         fontSize: 12,
         color: '#999',
         marginTop: 2,
+    },
+    receiptSection: {
+        marginTop: 4,
+        marginBottom: 20,
+    },
+    receiptHeaderRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: 10,
+    },
+    removeReceiptText: {
+        color: '#D9534F',
+        fontSize: 13,
+        fontWeight: '700',
+    },
+    receiptButton: {
+        height: 46,
+        borderRadius: 12,
+        borderWidth: 1,
+        borderColor: '#FFDCCF',
+        backgroundColor: '#FFF8F3',
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 8,
+    },
+    receiptButtonText: {
+        color: '#FF8C69',
+        fontSize: 14,
+        fontWeight: '700',
+    },
+    receiptPreview: {
+        marginTop: 10,
+        width: '100%',
+        height: 180,
+        borderRadius: 14,
+        backgroundColor: '#EEE',
     },
 });

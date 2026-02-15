@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef } from 'react';
+import React, { useState, useCallback, useMemo, useRef } from 'react';
 import { StyleSheet, ScrollView, View, Text, StatusBar, ActivityIndicator, RefreshControl } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { SectionHeader } from '@/components/home/SectionHeader';
@@ -13,8 +13,12 @@ export default function HistoryScreen() {
     const { session, addNotification, notifications, hasNotifications } = useSession();
     const currentUser = session ? JSON.parse(session) : null;
     const [expenses, setExpenses] = useState<any[]>([]);
+    const [settlements, setSettlements] = useState<any[]>([]);
+    const [usersById, setUsersById] = useState<Record<string, string>>({});
     const [userAvatarsById, setUserAvatarsById] = useState<Record<string, string>>({});
     const [groupsById, setGroupsById] = useState<Record<string, string>>({});
+    const [settlementDirectionFilter, setSettlementDirectionFilter] = useState<'ALL' | 'PAID' | 'RECEIVED'>('ALL');
+    const [settlementScopeFilter, setSettlementScopeFilter] = useState<'ALL' | 'GROUP' | 'PERSONAL'>('ALL');
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
     const [currentToast, setCurrentToast] = useState<string | null>(null);
@@ -80,17 +84,38 @@ export default function HistoryScreen() {
                     }
                     return acc;
                 }, {});
+                const userMap = result.data.reduce((acc: Record<string, string>, user: any) => {
+                    if (user?.id) {
+                        acc[user.id] = user.name || 'Unknown';
+                    }
+                    return acc;
+                }, {});
                 setUserAvatarsById(avatarMap);
+                setUsersById(userMap);
             }
         } catch (error) {
             console.error('Error fetching users:', error);
         }
     }, []);
+
+    const fetchSettlements = useCallback(async () => {
+        try {
+            const result = await api.getSettlements();
+            if (result.success) {
+                const sorted = result.data.sort((a: any, b: any) =>
+                    new Date(b.settledAt || b.createdAt).getTime() - new Date(a.settledAt || a.createdAt).getTime()
+                );
+                setSettlements(sorted);
+            }
+        } catch (error) {
+            console.error('Error fetching settlements:', error);
+        }
+    }, []);
     const fetchData = useCallback(async (showLoading = true) => {
         if (showLoading) setLoading(true);
-        await Promise.all([fetchExpenses(), fetchGroups(), fetchUsers()]);
+        await Promise.all([fetchExpenses(), fetchGroups(), fetchUsers(), fetchSettlements()]);
         setLoading(false);
-    }, [fetchExpenses, fetchGroups, fetchUsers]);
+    }, [fetchExpenses, fetchGroups, fetchUsers, fetchSettlements]);
 
     useFocusEffect(
         useCallback(() => {
@@ -131,10 +156,29 @@ export default function HistoryScreen() {
         const date = new Date(dateStr);
         return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
     };
+    const formatDateTime = (dateStr: string) => {
+        const date = new Date(dateStr);
+        return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) +
+            ' • ' +
+            date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+    };
 
     const getUserAvatar = (userId: string) => {
         return userAvatarsById[userId] || `https://i.pravatar.cc/150?u=${userId}`;
     };
+
+    const filteredSettlements = useMemo(() => {
+        return settlements.filter((settlement) => {
+            const isYouPaid = settlement.fromUserId === currentUser?.id;
+            const directionOk = settlementDirectionFilter === 'ALL'
+                || (settlementDirectionFilter === 'PAID' && isYouPaid)
+                || (settlementDirectionFilter === 'RECEIVED' && !isYouPaid);
+            const scopeOk = settlementScopeFilter === 'ALL'
+                || (settlementScopeFilter === 'GROUP' && Boolean(settlement.groupId))
+                || (settlementScopeFilter === 'PERSONAL' && !settlement.groupId);
+            return directionOk && scopeOk;
+        });
+    }, [currentUser?.id, settlementDirectionFilter, settlementScopeFilter, settlements]);
 
     return (
         <SafeAreaView style={styles.container} edges={['top']}>
@@ -152,6 +196,70 @@ export default function HistoryScreen() {
                 </View>
 
                 <View style={styles.listContainer}>
+                    <SectionHeader title="Settlement History" />
+                    <View style={styles.filterRow}>
+                        {(['ALL', 'PAID', 'RECEIVED'] as const).map((item) => (
+                            <Text
+                                key={`dir-${item}`}
+                                style={[styles.filterChip, settlementDirectionFilter === item && styles.filterChipActive]}
+                                onPress={() => setSettlementDirectionFilter(item)}
+                            >
+                                {item}
+                            </Text>
+                        ))}
+                    </View>
+                    <View style={styles.filterRow}>
+                        {(['ALL', 'GROUP', 'PERSONAL'] as const).map((item) => (
+                            <Text
+                                key={`scope-${item}`}
+                                style={[styles.filterChip, settlementScopeFilter === item && styles.filterChipActive]}
+                                onPress={() => setSettlementScopeFilter(item)}
+                            >
+                                {item}
+                            </Text>
+                        ))}
+                    </View>
+                    {loading ? (
+                        <ActivityIndicator size="small" color="#FF8C69" style={{ marginVertical: 20 }} />
+                    ) : filteredSettlements.length > 0 ? (
+                        <View style={styles.settlementList}>
+                            {filteredSettlements.map((settlement) => {
+                                const isYouPaid = settlement.fromUserId === currentUser?.id;
+                                const counterpartyId = isYouPaid ? settlement.toUserId : settlement.fromUserId;
+                                const counterpartyName = usersById[counterpartyId] || 'Unknown';
+                                const groupName = settlement.groupId ? groupsById[settlement.groupId] : undefined;
+                                const statusText = isYouPaid ? `You paid ${counterpartyName}` : `${counterpartyName} paid you`;
+                                const amountColor = isYouPaid ? '#D9534F' : '#2E7D32';
+                                return (
+                                    <View key={settlement.id} style={styles.settlementCard}>
+                                        <View style={styles.settlementTopRow}>
+                                            <Text style={styles.settlementTitle}>{statusText}</Text>
+                                            <Text style={[styles.settlementAmount, { color: amountColor }]}>
+                                                {isYouPaid ? '-' : '+'}₹{(Number(settlement.amount) || 0).toFixed(2)}
+                                            </Text>
+                                        </View>
+                                        <Text style={styles.settlementDate}>
+                                            {formatDateTime(settlement.settledAt || settlement.createdAt)}
+                                        </Text>
+                                        {groupName ? (
+                                            <Text style={styles.settlementMeta}>Group: {groupName}</Text>
+                                        ) : (
+                                            <Text style={styles.settlementMeta}>Personal settlement</Text>
+                                        )}
+                                        {settlement.note ? (
+                                            <Text style={styles.settlementNote}>Note: {settlement.note}</Text>
+                                        ) : null}
+                                    </View>
+                                );
+                            })}
+                        </View>
+                    ) : (
+                        <View style={styles.emptySettlementState}>
+                            <Text style={styles.emptySettlementTitle}>No settlements for this filter</Text>
+                            <Text style={styles.emptySettlementSub}>Try a different settlement filter.</Text>
+                        </View>
+                    )}
+
                     <SectionHeader title="All Expenses" />
                     {loading ? (
                         <ActivityIndicator size="small" color="#FF8C69" style={{ marginVertical: 20 }} />
@@ -248,6 +356,82 @@ const styles = StyleSheet.create({
         borderTopRightRadius: 32,
         paddingTop: 24,
         minHeight: '100%',
+    },
+    settlementList: {
+        paddingHorizontal: 16,
+        marginBottom: 18,
+        gap: 10,
+    },
+    filterRow: {
+        flexDirection: 'row',
+        gap: 8,
+        paddingHorizontal: 16,
+        marginBottom: 8,
+    },
+    filterChip: {
+        paddingHorizontal: 10,
+        paddingVertical: 6,
+        borderRadius: 999,
+        backgroundColor: '#EFEFEF',
+        color: '#555',
+        fontSize: 12,
+        fontWeight: '700',
+        overflow: 'hidden',
+    },
+    filterChipActive: {
+        backgroundColor: '#FF8C69',
+        color: '#fff',
+    },
+    settlementCard: {
+        backgroundColor: '#FFFFFF',
+        borderRadius: 14,
+        padding: 12,
+    },
+    settlementTopRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        gap: 8,
+    },
+    settlementTitle: {
+        flex: 1,
+        fontSize: 14,
+        fontWeight: '700',
+        color: '#1E1E1E',
+    },
+    settlementAmount: {
+        fontSize: 14,
+        fontWeight: '800',
+    },
+    settlementDate: {
+        marginTop: 4,
+        fontSize: 12,
+        color: '#666',
+    },
+    settlementMeta: {
+        marginTop: 4,
+        fontSize: 12,
+        color: '#666',
+    },
+    settlementNote: {
+        marginTop: 6,
+        fontSize: 12,
+        color: '#555',
+    },
+    emptySettlementState: {
+        paddingHorizontal: 20,
+        paddingVertical: 18,
+        alignItems: 'center',
+    },
+    emptySettlementTitle: {
+        fontSize: 15,
+        fontWeight: '700',
+        color: '#1E1E1E',
+    },
+    emptySettlementSub: {
+        marginTop: 4,
+        fontSize: 13,
+        color: '#777',
     },
 });
 

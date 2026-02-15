@@ -61,7 +61,7 @@ export function EditGroupForm({ group, onCancel, onSuccess }: EditGroupFormProps
         const result = await api.getUsers();
         if (result.success) {
             setAllUsers(result.data);
-            setUsers(result.data);
+            setUsers(result.data.filter((u: UserLike) => u.id !== currentUser?.id));
         }
     };
 
@@ -132,7 +132,16 @@ export function EditGroupForm({ group, onCancel, onSuccess }: EditGroupFormProps
             )
             : [];
 
-        return [currentUser, ...users, ...matchedContacts].filter(Boolean);
+        const seenIds = new Set<string>();
+        return [currentUser, ...users, ...matchedContacts]
+            .filter(Boolean)
+            .filter((item: any) => {
+                const key = item.id || item.phoneNumber;
+                if (!key) return false;
+                if (seenIds.has(key)) return false;
+                seenIds.add(key);
+                return true;
+            });
     }, [allUsers, contacts, currentUser, users, searchLower, searchQuery]);
 
     const canShowInvite = searchQuery.length > 2 &&

@@ -1,5 +1,5 @@
 import React, { useCallback, useMemo, useState } from 'react';
-import { ActivityIndicator, Modal, RefreshControl, ScrollView, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Alert, Modal, RefreshControl, ScrollView, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { IconSymbol } from '@/components/ui/icon-symbol';
@@ -47,6 +47,7 @@ export default function GroupExpensesScreen() {
     );
 
     const [expenses, setExpenses] = useState<any[]>([]);
+    const [settlements, setSettlements] = useState<any[]>([]);
     const [usersById, setUsersById] = useState<Record<string, string>>({});
     const [userAvatarsById, setUserAvatarsById] = useState<Record<string, string>>({});
     const [loading, setLoading] = useState(true);
@@ -164,6 +165,7 @@ export default function GroupExpensesScreen() {
             .filter((memberId) => memberId !== currentUser.id)
             .map((memberId) => {
                 let balance = 0;
+                let hasActivity = false;
 
                 expenses.forEach((expense: any) => {
                     const splitBetween: string[] = expense.splitBetween || [];
@@ -182,21 +184,45 @@ export default function GroupExpensesScreen() {
                     };
 
                     if (isPaidByMe && isMemberInSplit) {
+                        hasActivity = true;
                         balance += getSplitAmount(memberId);
                     } else if (isPaidByMember && isMeInSplit) {
+                        hasActivity = true;
                         balance -= getSplitAmount(currentUser.id);
                     }
                 });
 
+                settlements.forEach((settlement: any) => {
+                    const amount = Number(settlement.amount) || 0;
+                    if (!amount) return;
+
+                    if (settlement.fromUserId === memberId && settlement.toUserId === currentUser.id) {
+                        hasActivity = true;
+                        balance -= amount;
+                    }
+                    if (settlement.fromUserId === currentUser.id && settlement.toUserId === memberId) {
+                        hasActivity = true;
+                        balance += amount;
+                    }
+                });
+
+                const roundedBalance = Math.abs(balance) < 0.01 ? 0 : Number(balance.toFixed(2));
+
                 return {
                     userId: memberId,
                     name: usersById[memberId] || `User ${memberId.slice(0, 4)}`,
-                    balance,
+                    balance: roundedBalance,
+                    hasActivity,
                 };
             })
-            .filter((member) => Math.abs(member.balance) > 0.001)
-            .sort((a, b) => Math.abs(b.balance) - Math.abs(a.balance));
-    }, [currentUser?.id, expenses, groupMemberIds, usersById]);
+            .filter((member: MemberBalance & { hasActivity?: boolean }) => member.hasActivity)
+            .sort((a, b) => {
+                const aSettled = Math.abs(a.balance) < 0.01;
+                const bSettled = Math.abs(b.balance) < 0.01;
+                if (aSettled !== bSettled) return aSettled ? 1 : -1;
+                return Math.abs(b.balance) - Math.abs(a.balance);
+            });
+    }, [currentUser?.id, expenses, groupMemberIds, settlements, usersById]);
 
     const analytics = useMemo(() => {
         const spendByDate: Record<string, number> = {};
@@ -292,9 +318,10 @@ export default function GroupExpensesScreen() {
 
         if (showLoading) setLoading(true);
 
-        const [expensesResult, usersResult] = await Promise.all([
+        const [expensesResult, usersResult, settlementsResult] = await Promise.all([
             api.getExpenses(undefined, parsedGroupId),
             api.getUsers(),
+            api.getSettlements(parsedGroupId),
         ]);
 
         if (expensesResult.success) {
@@ -317,6 +344,13 @@ export default function GroupExpensesScreen() {
             }, {});
             setUsersById(mappedUsers);
             setUserAvatarsById(mappedAvatars);
+        }
+
+        if (settlementsResult.success) {
+            const sortedSettlements = settlementsResult.data.sort(
+                (a: any, b: any) => new Date(b.settledAt || b.createdAt).getTime() - new Date(a.settledAt || a.createdAt).getTime()
+            );
+            setSettlements(sortedSettlements);
         }
 
         if (showLoading) setLoading(false);
@@ -343,6 +377,38 @@ export default function GroupExpensesScreen() {
         });
         setIsEditModalVisible(true);
     }, [groupMemberIds, parsedGroupId, parsedGroupName]);
+
+    const handleSettleUp = useCallback((member: MemberBalance) => {
+        if (!currentUser?.id || !parsedGroupId) return;
+        const amount = Number(Math.abs(member.balance).toFixed(2));
+        if (!Number.isFinite(amount) || amount < 0.01) {
+            Alert.alert('Already settled', `No pending balance with ${member.name}.`);
+            return;
+        }
+        const title = member.balance > 0 ? 'Settle as received?' : 'Settle as paid?';
+        const message = member.balance > 0
+            ? `Record that ${member.name} paid you ${formatCurrency(amount)}?`
+            : `Record that you paid ${member.name} ${formatCurrency(amount)}?`;
+
+        Alert.alert(title, message, [
+            { text: 'Cancel', style: 'cancel' },
+            {
+                text: 'Confirm',
+                onPress: async () => {
+                    const payload = member.balance > 0
+                        ? { fromUserId: member.userId, toUserId: currentUser.id, amount, groupId: parsedGroupId }
+                        : { fromUserId: currentUser.id, toUserId: member.userId, amount, groupId: parsedGroupId };
+                    const result = await api.createSettlement(payload);
+                    if (!result.success) {
+                        Alert.alert('Error', result.message || 'Failed to settle up');
+                        return;
+                    }
+                    Alert.alert('Success', 'Settlement recorded');
+                    fetchData(false);
+                },
+            },
+        ]);
+    }, [currentUser?.id, fetchData, parsedGroupId]);
 
     return (
         <SafeAreaView style={styles.container} edges={['top']}>
@@ -502,30 +568,30 @@ export default function GroupExpensesScreen() {
                         <View style={styles.memberBalanceCard}>
                             <Text style={styles.memberBalanceTitle}>Group balances with you</Text>
                             {memberBalances.map((member) => {
-                                const status = member.balance > 0 ? 'You get' : 'You pay';
-                                const amountColor = member.balance > 0 ? '#2E7D32' : '#D9534F';
+                                const isSettled = Math.abs(member.balance) < 0.01;
+                                const status = isSettled ? 'Settled' : (member.balance > 0 ? 'Pending • You get' : 'Pending • You pay');
+                                const amountColor = isSettled ? '#777' : (member.balance > 0 ? '#2E7D32' : '#D9534F');
 
                                 return (
                                     <TouchableOpacity
                                         key={member.userId}
                                         style={styles.memberBalanceRow}
                                         activeOpacity={0.8}
-                                        onPress={() =>
-                                            router.push({
-                                                pathname: '/(tabs)/user-detail',
-                                                params: { userId: member.userId },
-                                            })
-                                        }
+                                        onPress={() => handleSettleUp(member)}
                                     >
                                         <View style={styles.memberAvatar}>
                                             <Text style={styles.memberAvatarText}>{member.name.charAt(0)}</Text>
                                         </View>
                                         <View style={styles.memberInfo}>
                                             <Text style={styles.memberName}>{member.name}</Text>
-                                            <Text style={styles.memberStatus}>{status}</Text>
+                                            <View style={[styles.statusPill, isSettled ? styles.statusPillSettled : styles.statusPillPending]}>
+                                                <Text style={[styles.statusPillText, isSettled ? styles.statusPillTextSettled : styles.statusPillTextPending]}>
+                                                    {status}
+                                                </Text>
+                                            </View>
                                         </View>
                                         <Text style={[styles.memberAmount, { color: amountColor }]}>
-                                            {formatCurrency(Math.abs(member.balance))}
+                                            {isSettled ? 'Rs 0.00' : formatCurrency(Math.abs(member.balance))}
                                         </Text>
                                     </TouchableOpacity>
                                 );
@@ -953,6 +1019,29 @@ const styles = StyleSheet.create({
         marginTop: 2,
         fontSize: 12,
         color: '#777',
+    },
+    statusPill: {
+        marginTop: 4,
+        alignSelf: 'flex-start',
+        borderRadius: 999,
+        paddingHorizontal: 8,
+        paddingVertical: 3,
+    },
+    statusPillPending: {
+        backgroundColor: '#FFF3ED',
+    },
+    statusPillSettled: {
+        backgroundColor: '#EEF7EE',
+    },
+    statusPillText: {
+        fontSize: 11,
+        fontWeight: '700',
+    },
+    statusPillTextPending: {
+        color: '#C85F3D',
+    },
+    statusPillTextSettled: {
+        color: '#2E7D32',
     },
     memberAmount: {
         fontSize: 14,

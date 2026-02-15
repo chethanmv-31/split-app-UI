@@ -16,6 +16,11 @@ type AnalyticsState = {
   groupTotals: Record<string, number>;
   dailyTotals: Record<string, number>;
   monthlyTotals: Record<string, number>;
+  settlementTotals: {
+    paid: number;
+    received: number;
+    net: number;
+  };
 };
 
 type RankedDatum = {
@@ -70,6 +75,11 @@ const initialState: AnalyticsState = {
   groupTotals: {},
   dailyTotals: {},
   monthlyTotals: {},
+  settlementTotals: {
+    paid: 0,
+    received: 0,
+    net: 0,
+  },
 };
 
 export default function AnalyticsScreen() {
@@ -143,6 +153,20 @@ export default function AnalyticsScreen() {
         return expense.groupId === selectedGroupFilter;
       });
 
+      if (selectedGroupFilter !== 'personal') {
+        const summaryResult = await api.getAnalyticsSummary({
+          groupId: selectedGroupFilter === 'all' ? undefined : selectedGroupFilter,
+          timeFilter: selectedTimeFilter,
+        });
+        if (summaryResult.success) {
+          setAnalytics({
+            ...summaryResult.data,
+            settlementTotals: summaryResult.data.settlementTotals || { paid: 0, received: 0, net: 0 },
+          });
+          return;
+        }
+      }
+
       const next: AnalyticsState = {
         youOwe: 0,
         owesYou: 0,
@@ -152,6 +176,7 @@ export default function AnalyticsScreen() {
         groupTotals: {},
         dailyTotals: {},
         monthlyTotals: {},
+        settlementTotals: { paid: 0, received: 0, net: 0 },
       };
 
       filteredExpenses.forEach((expense: any) => {
@@ -552,6 +577,17 @@ export default function AnalyticsScreen() {
                 <View style={styles.card}>
                   <Text style={styles.cardLabel}>Transactions</Text>
                   <Text style={styles.cardValue}>{analytics.transactionCount}</Text>
+                </View>
+              </View>
+
+              <View style={styles.cardsRow}>
+                <View style={styles.card}>
+                  <Text style={styles.cardLabel}>Settled (Paid)</Text>
+                  <Text style={styles.cardValue}>{formatMoney(analytics.settlementTotals.paid)}</Text>
+                </View>
+                <View style={styles.card}>
+                  <Text style={styles.cardLabel}>Settled (Received)</Text>
+                  <Text style={styles.cardValue}>{formatMoney(analytics.settlementTotals.received)}</Text>
                 </View>
               </View>
 
