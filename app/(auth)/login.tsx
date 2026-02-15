@@ -5,21 +5,62 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useSession } from '@/ctx';
 
 export default function Login() {
-    const [loginMode, setLoginMode] = React.useState<'email' | 'mobile'>('email');
-    const [mobile, setMobile] = React.useState('');
-    const [otp, setOtp] = React.useState('');
-    const [showOtpInput, setShowOtpInput] = React.useState(false);
-    const [timer, setTimer] = React.useState(0);
-
     const { signIn, signInWithOtp, sendOtp } = useSession();
+    const [mode, setMode] = React.useState<'email' | 'mobile'>('email');
     const [email, setEmail] = React.useState('');
     const [password, setPassword] = React.useState('');
+    const [mobile, setMobile] = React.useState('');
+    const [otp, setOtp] = React.useState('');
+    const [otpSentTo, setOtpSentTo] = React.useState<string | null>(null);
+    const [otpCooldown, setOtpCooldown] = React.useState(0);
+    const [isSubmitting, setIsSubmitting] = React.useState(false);
+    const [isSendingOtp, setIsSendingOtp] = React.useState(false);
 
     const validateEmail = (email: string) => {
         return /\S+@\S+\.\S+/.test(email);
     };
 
+    const normalizePhone = (input: string): string => {
+        const cleaned = input.trim().replace(/[^\d+]/g, '');
+        if (!cleaned) return '';
+        if (cleaned.startsWith('+')) {
+            return `+${cleaned.slice(1).replace(/\D/g, '')}`;
+        }
+        return cleaned.replace(/\D/g, '');
+    };
+
+    const isValidPhone = (input: string): boolean => /^\+?\d{10,15}$/.test(input);
+
+    React.useEffect(() => {
+        if (otpCooldown <= 0) return;
+        const interval = setInterval(() => {
+            setOtpCooldown((prev) => (prev > 0 ? prev - 1 : 0));
+        }, 1000);
+        return () => clearInterval(interval);
+    }, [otpCooldown]);
+
+    React.useEffect(() => {
+        if (mode === 'email') {
+            setMobile('');
+            setOtp('');
+            setOtpSentTo(null);
+            setOtpCooldown(0);
+        }
+    }, [mode]);
+
+    React.useEffect(() => {
+        const normalized = normalizePhone(mobile);
+        if (!otpSentTo) return;
+        if (normalized && normalized !== otpSentTo) {
+            setOtp('');
+            setOtpSentTo(null);
+            setOtpCooldown(0);
+        }
+    }, [mobile, otpSentTo]);
+
     const handleLogin = async () => {
+        if (isSubmitting) return;
+
         if (!email || !password) {
             Alert.alert('Error', 'Please enter email and password');
             return;
@@ -30,49 +71,69 @@ export default function Login() {
             return;
         }
 
-        const result = await signIn(email, password);
-        if (result.success) {
-            router.replace('/');
-        } else {
-            Alert.alert('Error', result.message || 'Login failed');
+        setIsSubmitting(true);
+        try {
+            const result = await signIn(email, password);
+            if (result.success) {
+                router.replace('/');
+            } else {
+                Alert.alert('Error', result.message || 'Login failed');
+            }
+        } finally {
+            setIsSubmitting(false);
         }
     };
 
-    React.useEffect(() => {
-        let interval: any;
-        if (timer > 0) {
-            interval = setInterval(() => {
-                setTimer((prev) => prev - 1);
-            }, 1000);
-        }
-        return () => clearInterval(interval);
-    }, [timer]);
-
     const handleSendOtp = async () => {
-        if (mobile.length < 10) {
+        if (isSendingOtp || otpCooldown > 0) return;
+
+        const normalizedMobile = normalizePhone(mobile);
+        if (!isValidPhone(normalizedMobile)) {
             Alert.alert('Error', 'Please enter a valid mobile number');
             return;
         }
-        const result = await sendOtp(mobile);
-        if (result.success) {
-            setShowOtpInput(true);
-            setTimer(60);
-            Alert.alert('Success', `OTP sent to your mobile number (Actual: ${result.otp})`);
-        } else {
-            Alert.alert('Error', result.message || 'Failed to send OTP');
+
+        setIsSendingOtp(true);
+        try {
+            const result = await sendOtp(normalizedMobile);
+            if (!result.success) {
+                Alert.alert('Error', result.message || 'Failed to send OTP');
+                return;
+            }
+
+            setOtp('');
+            setOtpSentTo(normalizedMobile);
+            setOtpCooldown(60);
+            Alert.alert('OTP Sent', 'Check your mobile for the 4-digit code.');
+        } finally {
+            setIsSendingOtp(false);
         }
     };
 
     const handleVerifyOtp = async () => {
-        if (!otp) {
-            Alert.alert('Error', 'Please enter OTP');
+        if (isSubmitting) return;
+
+        const normalizedMobile = normalizePhone(mobile);
+        if (!otpSentTo || normalizedMobile !== otpSentTo) {
+            Alert.alert('Error', 'Please request OTP for this number first.');
             return;
         }
-        const result = await signInWithOtp(mobile, otp);
-        if (result.success) {
-            router.replace('/');
-        } else {
-            Alert.alert('Error', result.message || 'Login failed');
+
+        if (!/^\d{4}$/.test(otp.trim())) {
+            Alert.alert('Error', 'OTP must be a 4-digit code');
+            return;
+        }
+
+        setIsSubmitting(true);
+        try {
+            const result = await signInWithOtp(normalizedMobile, otp.trim());
+            if (result.success) {
+                router.replace('/');
+            } else {
+                Alert.alert('Error', result.message || 'OTP login failed');
+            }
+        } finally {
+            setIsSubmitting(false);
         }
     };
 
@@ -95,22 +156,24 @@ export default function Login() {
                         <Text style={styles.title}>Welcome Back!</Text>
                         <Text style={styles.subtitle}>Sign in to continue</Text>
 
-                        <View style={styles.tabContainer}>
+                        <View style={styles.modeSwitch}>
                             <TouchableOpacity
-                                style={[styles.tab, loginMode === 'email' && styles.activeTab]}
-                                onPress={() => setLoginMode('email')}
+                                style={[styles.modeButton, mode === 'email' && styles.modeButtonActive]}
+                                onPress={() => setMode('email')}
+                                disabled={isSubmitting || isSendingOtp}
                             >
-                                <Text style={[styles.tabText, loginMode === 'email' && styles.activeTabText]}>Email</Text>
+                                <Text style={[styles.modeText, mode === 'email' && styles.modeTextActive]}>Email</Text>
                             </TouchableOpacity>
                             <TouchableOpacity
-                                style={[styles.tab, loginMode === 'mobile' && styles.activeTab]}
-                                onPress={() => setLoginMode('mobile')}
+                                style={[styles.modeButton, mode === 'mobile' && styles.modeButtonActive]}
+                                onPress={() => setMode('mobile')}
+                                disabled={isSubmitting || isSendingOtp}
                             >
-                                <Text style={[styles.tabText, loginMode === 'mobile' && styles.activeTabText]}>Mobile</Text>
+                                <Text style={[styles.modeText, mode === 'mobile' && styles.modeTextActive]}>Mobile OTP</Text>
                             </TouchableOpacity>
                         </View>
 
-                        {loginMode === 'email' ? (
+                        {mode === 'email' ? (
                             <>
                                 <View style={styles.inputContainer}>
                                     <Text style={styles.label}>Email</Text>
@@ -137,8 +200,12 @@ export default function Login() {
                                     />
                                 </View>
 
-                                <TouchableOpacity style={styles.button} onPress={handleLogin}>
-                                    <Text style={styles.buttonText}>Login</Text>
+                                <TouchableOpacity
+                                    style={[styles.button, isSubmitting && styles.buttonDisabled]}
+                                    onPress={handleLogin}
+                                    disabled={isSubmitting}
+                                >
+                                    <Text style={styles.buttonText}>{isSubmitting ? 'Signing in...' : 'Login'}</Text>
                                 </TouchableOpacity>
                             </>
                         ) : (
@@ -152,47 +219,63 @@ export default function Login() {
                                         value={mobile}
                                         onChangeText={setMobile}
                                         keyboardType="phone-pad"
-                                        editable={!showOtpInput}
+                                        autoCapitalize="none"
                                     />
                                 </View>
 
-                                {showOtpInput && (
-                                    <View style={styles.inputContainer}>
-                                        <Text style={styles.label}>OTP</Text>
-                                        <TextInput
-                                            style={styles.input}
-                                            placeholder="Enter OTP"
-                                            placeholderTextColor="#999"
-                                            value={otp}
-                                            onChangeText={setOtp}
-                                            keyboardType="number-pad"
-                                        />
-                                    </View>
-                                )}
-
-                                {!showOtpInput ? (
-                                    <TouchableOpacity style={styles.button} onPress={handleSendOtp}>
-                                        <Text style={styles.buttonText}>Send OTP</Text>
-                                    </TouchableOpacity>
-                                ) : (
-                                    <TouchableOpacity style={styles.button} onPress={handleVerifyOtp}>
-                                        <Text style={styles.buttonText}>Verify & Login</Text>
-                                    </TouchableOpacity>
-                                )}
-
-                                {showOtpInput && (
+                                {!otpSentTo ? (
                                     <TouchableOpacity
-                                        style={[styles.resendButton, timer > 0 && styles.disabledResendButton]}
+                                        style={[styles.button, isSendingOtp && styles.buttonDisabled]}
                                         onPress={handleSendOtp}
-                                        disabled={timer > 0}
+                                        disabled={isSendingOtp}
                                     >
-                                        <Text style={[styles.resendButtonText, timer > 0 && styles.disabledResendButtonText]}>
-                                            {timer > 0 ? `Resend OTP in ${timer}s` : 'Resend OTP'}
+                                        <Text style={styles.buttonText}>
+                                            {isSendingOtp ? 'Sending...' : 'Send OTP'}
                                         </Text>
                                     </TouchableOpacity>
-                                )}
+                                ) : null}
+
+                                {otpSentTo ? (
+                                    <>
+                                        <View style={[styles.inputContainer, { marginTop: 6, marginBottom: 12 }]}>
+                                            <Text style={styles.label}>OTP</Text>
+                                            <TextInput
+                                                style={styles.input}
+                                                placeholder="Enter 4-digit OTP"
+                                                placeholderTextColor="#999"
+                                                value={otp}
+                                                onChangeText={setOtp}
+                                                keyboardType="number-pad"
+                                                maxLength={4}
+                                            />
+                                        </View>
+                                        <TouchableOpacity
+                                            onPress={handleSendOtp}
+                                            disabled={isSendingOtp || otpCooldown > 0}
+                                            style={styles.resendRow}
+                                        >
+                                            <Text
+                                                style={[
+                                                    styles.resendText,
+                                                    (isSendingOtp || otpCooldown > 0) && styles.resendTextDisabled,
+                                                ]}
+                                            >
+                                                {isSendingOtp ? 'Sending OTP...' : otpCooldown > 0 ? `Resend OTP in ${otpCooldown}s` : 'Resend OTP'}
+                                            </Text>
+                                        </TouchableOpacity>
+
+                                        <TouchableOpacity
+                                            style={[styles.button, isSubmitting && styles.buttonDisabled]}
+                                            onPress={handleVerifyOtp}
+                                            disabled={isSubmitting}
+                                        >
+                                            <Text style={styles.buttonText}>{isSubmitting ? 'Verifying...' : 'Verify & Login'}</Text>
+                                        </TouchableOpacity>
+                                    </>
+                                ) : null}
                             </>
                         )}
+
 
                         <View style={styles.footer}>
                             <Text style={styles.footerText}>Don't have an account? </Text>
@@ -272,35 +355,30 @@ const styles = StyleSheet.create({
         marginBottom: 24,
         textAlign: 'center',
     },
-    tabContainer: {
+    modeSwitch: {
         flexDirection: 'row',
-        backgroundColor: '#F5F5F5',
-        borderRadius: 12,
+        backgroundColor: '#F3F3F3',
+        borderRadius: 14,
         padding: 4,
-        marginBottom: 24,
+        marginBottom: 18,
     },
-    tab: {
+    modeButton: {
         flex: 1,
-        paddingVertical: 10,
         alignItems: 'center',
-        borderRadius: 8,
+        justifyContent: 'center',
+        paddingVertical: 10,
+        borderRadius: 10,
     },
-    activeTab: {
-        backgroundColor: 'white',
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 1 },
-        shadowOpacity: 0.1,
-        shadowRadius: 2,
-        elevation: 2,
+    modeButtonActive: {
+        backgroundColor: '#FFFFFF',
     },
-    tabText: {
+    modeText: {
         color: '#666',
-        fontWeight: '600',
-        fontSize: 14,
+        fontSize: 13,
+        fontWeight: '700',
     },
-    activeTabText: {
+    modeTextActive: {
         color: '#FF8C69',
-        fontWeight: 'bold',
     },
     inputContainer: {
         marginBottom: 20,
@@ -331,6 +409,22 @@ const styles = StyleSheet.create({
         shadowRadius: 8,
         elevation: 4,
     },
+    buttonDisabled: {
+        opacity: 0.7,
+    },
+    resendRow: {
+        marginTop: -4,
+        marginBottom: 8,
+        alignItems: 'flex-end',
+    },
+    resendText: {
+        color: '#FF8C69',
+        fontSize: 13,
+        fontWeight: '700',
+    },
+    resendTextDisabled: {
+        color: '#B7B7B7',
+    },
     buttonText: {
         color: 'white',
         fontSize: 18,
@@ -349,21 +443,5 @@ const styles = StyleSheet.create({
         color: '#FF8C69',
         fontWeight: 'bold',
         fontSize: 14,
-    },
-    resendButton: {
-        marginTop: 16,
-        alignItems: 'center',
-        padding: 8,
-    },
-    disabledResendButton: {
-        opacity: 0.6,
-    },
-    resendButtonText: {
-        color: '#FF8C69',
-        fontSize: 14,
-        fontWeight: '600',
-    },
-    disabledResendButtonText: {
-        color: '#999',
     },
 });

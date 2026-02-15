@@ -58,13 +58,39 @@ export function SessionProvider(props: React.PropsWithChildren) {
         setHasNotifications(false);
     }, []);
 
+    React.useEffect(() => {
+        if (!session) {
+            api.setAccessToken(null);
+            return;
+        }
+
+        try {
+            const parsed = JSON.parse(session);
+            api.setAccessToken(parsed?.accessToken || null);
+        } catch {
+            api.setAccessToken(null);
+        }
+    }, [session]);
+
+    React.useEffect(() => {
+        api.setUnauthorizedHandler(() => {
+            api.setAccessToken(null);
+            setSession(null);
+        });
+
+        return () => {
+            api.setUnauthorizedHandler(null);
+        };
+    }, [setSession]);
+
     return (
         <AuthContext.Provider
             value={{
                 signIn: async (email, password) => {
                     const result = await api.login(email, password);
                     if (result.success) {
-                        setSession(JSON.stringify(result.user));
+                        api.setAccessToken(result.accessToken ?? null);
+                        setSession(JSON.stringify({ ...result.user, accessToken: result.accessToken }));
                         return { success: true };
                     }
                     return { success: false, message: result.message };
@@ -79,7 +105,8 @@ export function SessionProvider(props: React.PropsWithChildren) {
                 signInWithOtp: async (mobile, otp) => {
                     const result = await api.verifyOtp(mobile, otp);
                     if (result.success) {
-                        setSession(JSON.stringify(result.user));
+                        api.setAccessToken(result.accessToken ?? null);
+                        setSession(JSON.stringify({ ...result.user, accessToken: result.accessToken }));
                         return { success: true };
                     }
                     return { success: false, message: result.message };
@@ -92,6 +119,7 @@ export function SessionProvider(props: React.PropsWithChildren) {
                     return { success: false, message: result.message };
                 },
                 signOut: () => {
+                    api.setAccessToken(null);
                     setSession(null);
                 },
                 updateSessionUser: (updates) => {

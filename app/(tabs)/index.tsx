@@ -10,7 +10,6 @@ import { NotificationsModal } from '@/components/home/NotificationsModal';
 import { api } from '../../services/api';
 import { useSession } from '../../ctx';
 import { useFocusEffect, useRouter } from 'expo-router';
-import { useNotifications } from '@/hooks/useNotifications';
 
 export default function HomeScreen() {
   const router = useRouter();
@@ -52,7 +51,7 @@ export default function HomeScreen() {
 
   const fetchExpenses = useCallback(async () => {
     try {
-      const result = await api.getExpenses();
+      const result = await api.getExpenses(currentUser?.id);
       if (result.success) {
         const sortedExpenses = result.data.sort((a: any, b: any) =>
           new Date(b.date).getTime() - new Date(a.date).getTime()
@@ -172,6 +171,12 @@ export default function HomeScreen() {
     switch (category) {
       case 'Food': return { icon: 'https://cdn-icons-png.flaticon.com/512/3075/3075977.png', color: '#FFF9C4' };
       case 'Travel': return { icon: 'https://cdn-icons-png.flaticon.com/512/201/201331.png', color: '#E8F5E9' };
+      case 'Shopping': return { icon: 'https://cdn-icons-png.flaticon.com/512/2838/2838895.png', color: '#FFF3E0' };
+      case 'Health': return { icon: 'https://cdn-icons-png.flaticon.com/512/2966/2966488.png', color: '#FCE4EC' };
+      case 'Education': return { icon: 'https://cdn-icons-png.flaticon.com/512/2436/2436636.png', color: '#E3F2FD' };
+      case 'Rent': return { icon: 'https://cdn-icons-png.flaticon.com/512/1946/1946488.png', color: '#F1F8E9' };
+      case 'Utilities': return { icon: 'https://cdn-icons-png.flaticon.com/512/3079/3079167.png', color: '#FFFDE7' };
+      case 'Transport': return { icon: 'https://cdn-icons-png.flaticon.com/512/744/744465.png', color: '#E8EAF6' };
       case 'Entertainment': return { icon: 'https://cdn-icons-png.flaticon.com/512/3163/3163478.png', color: '#F3E5F5' };
       case 'Bills': return { icon: 'https://cdn-icons-png.flaticon.com/512/1051/1051275.png', color: '#FFF3E0' };
       case 'Others': return { icon: 'https://cdn-icons-png.flaticon.com/512/570/570223.png', color: '#F5F5F5' };

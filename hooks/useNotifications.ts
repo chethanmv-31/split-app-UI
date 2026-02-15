@@ -1,53 +1,60 @@
 import { useEffect, useRef } from 'react';
 import { Platform } from 'react-native';
 import * as Device from 'expo-device';
-import * as Notifications from 'expo-notifications';
 import Constants from 'expo-constants';
 import { useSession } from '@/ctx';
 import { API_URL } from '../services/api';
 
-Notifications.setNotificationHandler({
-    handleNotification: async () => ({
-        shouldShowAlert: true,
-        shouldPlaySound: true,
-        shouldSetBadge: false,
-        shouldShowBanner: true,
-        shouldShowList: true,
-    }),
-});
+const isExpoGo =
+    Constants.executionEnvironment === 'storeClient' ||
+    Constants.appOwnership === 'expo';
+type NotificationsModule = typeof import('expo-notifications');
 
 export function useNotifications() {
     const { session } = useSession();
     const user = session ? JSON.parse(session) : null;
-    const notificationListener = useRef<Notifications.Subscription>(undefined);
-    const responseListener = useRef<Notifications.Subscription>(undefined);
+    const notificationListener = useRef<{ remove: () => void } | null>(null);
+    const responseListener = useRef<{ remove: () => void } | null>(null);
 
     useEffect(() => {
-        if (!user?.id) return;
+        if (!user?.id || isExpoGo) return;
 
-        registerForPushNotificationsAsync().then(token => {
+        let isMounted = true;
+
+        (async () => {
+            const Notifications = await import('expo-notifications');
+            if (!isMounted) return;
+
+            Notifications.setNotificationHandler({
+                handleNotification: async () => ({
+                    shouldShowAlert: true,
+                    shouldPlaySound: true,
+                    shouldSetBadge: false,
+                    shouldShowBanner: true,
+                    shouldShowList: true,
+                }),
+            });
+
+            const token = await registerForPushNotificationsAsync(Notifications);
             if (token && user?.id) {
                 sendTokenToBackend(user.id, token);
             } else if (!user?.id) {
                 console.log('[useNotifications] Skipping push token synchronization: No user ID available');
             }
-        });
 
-        notificationListener.current = Notifications.addNotificationReceivedListener(notification => {
-            console.log('Notification received:', notification);
-        });
+            notificationListener.current = Notifications.addNotificationReceivedListener(notification => {
+                console.log('Notification received:', notification);
+            });
 
-        responseListener.current = Notifications.addNotificationResponseReceivedListener(response => {
-            console.log('Notification response received:', response);
-        });
+            responseListener.current = Notifications.addNotificationResponseReceivedListener(response => {
+                console.log('Notification response received:', response);
+            });
+        })();
 
         return () => {
-            if (notificationListener.current) {
-                notificationListener.current.remove();
-            }
-            if (responseListener.current) {
-                responseListener.current.remove();
-            }
+            isMounted = false;
+            notificationListener.current?.remove();
+            responseListener.current?.remove();
         };
     }, [user?.id]);
 
@@ -72,7 +79,11 @@ export function useNotifications() {
         }
     };
 
-    async function registerForPushNotificationsAsync() {
+    async function registerForPushNotificationsAsync(Notifications: NotificationsModule) {
+        if (isExpoGo) {
+            return;
+        }
+
         let token;
 
         if (Platform.OS === 'android') {

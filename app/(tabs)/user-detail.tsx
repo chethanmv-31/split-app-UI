@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, Image, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
@@ -6,33 +6,64 @@ import { IconSymbol } from '@/components/ui/icon-symbol';
 import { api } from '../../services/api';
 import { useSession } from '../../ctx';
 
+type LedgerEvent = {
+  id: string;
+  kind: 'expense' | 'settlement';
+  title: string;
+  date: string;
+  amountImpact: number;
+  runningBalance: number;
+  expenseId?: string;
+  note?: string;
+};
+
 export default function UserDetailScreen() {
   const router = useRouter();
   const { userId } = useLocalSearchParams();
   const { session } = useSession();
   const currentUser = session ? JSON.parse(session) : null;
+  const parsedUserId = Array.isArray(userId) ? userId[0] : userId;
+
   const [user, setUser] = useState<any>(null);
   const [sharedExpenses, setSharedExpenses] = useState<any[]>([]);
+  const [sharedSettlements, setSharedSettlements] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     fetchData();
-  }, [userId]);
+  }, [parsedUserId]);
 
   const fetchData = async () => {
     setLoading(true);
     try {
-      const [usersRes, expensesRes] = await Promise.all([api.getUsers(), api.getExpenses()]);
+      const [usersRes, expensesRes, settlementsRes] = await Promise.all([
+        api.getUsers(),
+        api.getExpenses(currentUser?.id),
+        api.getSettlements(),
+      ]);
+
       if (usersRes.success && expensesRes.success) {
-        const foundUser = usersRes.data.find((u: any) => u.id === userId);
+        const foundUser = usersRes.data.find((u: any) => u.id === parsedUserId);
         setUser(foundUser);
 
-        const shared = expensesRes.data.filter((e: any) => {
-          const split = e.splitBetween || [];
-          return split.includes(userId) && split.includes(currentUser?.id);
-        }).sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime());
+        const shared = expensesRes.data
+          .filter((e: any) => {
+            const split = e.splitBetween || [];
+            return split.includes(parsedUserId) && split.includes(currentUser?.id);
+          })
+          .sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
         setSharedExpenses(shared);
+      }
+
+      if (settlementsRes.success) {
+        const related = settlementsRes.data
+          .filter((s: any) => (
+            (s.fromUserId === currentUser?.id && s.toUserId === parsedUserId)
+            || (s.fromUserId === parsedUserId && s.toUserId === currentUser?.id)
+          ))
+          .sort((a: any, b: any) => new Date(b.settledAt || b.createdAt).getTime() - new Date(a.settledAt || a.createdAt).getTime());
+        setSharedSettlements(related);
       }
     } catch (err) {
       console.error(err);
@@ -46,40 +77,65 @@ export default function UserDetailScreen() {
     return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
   };
 
-  const getMyNetForExpense = (expense: any) => {
+  const getShareForUser = (expense: any, targetUserId: string) => {
+    const splitBetween = expense.splitBetween || [];
+    const splitDetails = expense.splitDetails || [];
+
     if (expense.splitType === 'EQUAL') {
-      const count = (expense.splitBetween || []).length;
-      const share = count > 0 ? expense.amount / count : 0;
-      if (expense.paidBy === currentUser?.id) {
-        // others owe me (excluding me)
-        return (expense.splitBetween.includes(currentUser?.id) ? share * (count - 1) : expense.amount) - (expense.splitBetween.includes(userId) ? share : 0);
-      } else if (expense.paidBy === userId) {
-        // I owe user (my share)
-        return -share;
-      } else {
-        // neither paid by us; compute my share vs their share
-        const myShare = share;
-        const theirShare = share;
-        return myShare - theirShare;
-      }
-    } else {
-      const myDetail = (expense.splitDetails || []).find((d: any) => d.userId === currentUser?.id);
-      const theirDetail = (expense.splitDetails || []).find((d: any) => d.userId === userId);
-      const myAmt = myDetail ? myDetail.amount : 0;
-      const theirAmt = theirDetail ? theirDetail.amount : 0;
-
-      if (expense.paidBy === currentUser?.id) {
-        // others owe me
-        return (expense.splitBetween.includes(currentUser?.id) ? 0 : 0) + (theirAmt ? theirAmt : 0) * -0 + (theirAmt || 0);
-      }
-
-      if (expense.paidBy === userId) {
-        return -myAmt;
-      }
-
-      return myAmt - theirAmt;
+      const count = splitBetween.length;
+      if (count <= 0) return 0;
+      return splitBetween.includes(targetUserId) ? (Number(expense.amount) || 0) / count : 0;
     }
+
+    return splitDetails.find((d: any) => d.userId === targetUserId)?.amount || 0;
   };
+
+  const getMyNetForExpense = (expense: any) => {
+    const payerId = expense.paidBy;
+    if (payerId === currentUser?.id) {
+      return getShareForUser(expense, parsedUserId || '');
+    }
+    if (payerId === parsedUserId) {
+      return -getShareForUser(expense, currentUser?.id || '');
+    }
+    return 0;
+  };
+
+  const ledgerEvents = useMemo<LedgerEvent[]>(() => {
+    const expenseEvents = sharedExpenses.map((exp: any) => ({
+      id: `expense-${exp.id}`,
+      kind: 'expense' as const,
+      title: exp.title,
+      date: exp.date,
+      amountImpact: getMyNetForExpense(exp),
+      expenseId: exp.id,
+      note: exp.category,
+    }));
+
+    const settlementEvents = sharedSettlements.map((item: any) => {
+      const fromMe = item.fromUserId === currentUser?.id;
+      return {
+        id: `settlement-${item.id}`,
+        kind: 'settlement' as const,
+        title: fromMe ? `You paid ${user?.name || 'user'}` : `${user?.name || 'User'} paid you`,
+        date: item.settledAt || item.createdAt,
+        amountImpact: fromMe ? -(Number(item.amount) || 0) : (Number(item.amount) || 0),
+        note: item.note,
+      };
+    });
+
+    const chronological = [...expenseEvents, ...settlementEvents].sort(
+      (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime(),
+    );
+
+    let running = 0;
+    return chronological.map((event) => {
+      running += event.amountImpact;
+      return { ...event, runningBalance: running };
+    }).reverse();
+  }, [currentUser?.id, parsedUserId, sharedExpenses, sharedSettlements, user?.name]);
+
+  const net = useMemo(() => (ledgerEvents.length > 0 ? ledgerEvents[0].runningBalance : 0), [ledgerEvents]);
 
   if (loading) {
     return (
@@ -115,13 +171,6 @@ export default function UserDetailScreen() {
     );
   }
 
-  // calculate overall balance between currentUser and this user
-  let net = 0;
-  sharedExpenses.forEach(exp => {
-    const val = getMyNetForExpense(exp);
-    net += val;
-  });
-
   return (
     <SafeAreaView style={styles.container} edges={["top"]}>
       <View style={styles.header}>
@@ -138,25 +187,45 @@ export default function UserDetailScreen() {
           <Text style={styles.userName}>{user.name}</Text>
           <Text style={styles.userPhone}>{user.mobile || ''}</Text>
           <Text style={styles.netLabel}>Net balance</Text>
-          <Text style={[styles.netAmount, { color: net >= 0 ? '#2E7D32' : '#D32F2F' }]}>{net >= 0 ? `₹${Math.abs(net).toFixed(2)} (Get)` : `₹${Math.abs(net).toFixed(2)} (Pay)`}</Text>
+          <Text style={[styles.netAmount, { color: net >= 0 ? '#2E7D32' : '#D32F2F' }]}>
+            {net >= 0 ? `₹${Math.abs(net).toFixed(2)} (Get)` : `₹${Math.abs(net).toFixed(2)} (Pay)`}
+          </Text>
         </View>
 
         <View style={styles.splitCard}>
-          <Text style={styles.sectionTitle}>Shared Expenses</Text>
-          {sharedExpenses.length === 0 ? (
+          <Text style={styles.sectionTitle}>Ledger (Expenses + Settlements)</Text>
+          {ledgerEvents.length === 0 ? (
             <View style={{ padding: 20, alignItems: 'center' }}>
-              <Text style={{ color: '#666' }}>No shared expenses yet</Text>
+              <Text style={{ color: '#666' }}>No transactions yet</Text>
             </View>
           ) : (
-            sharedExpenses.map((exp: any) => {
-              const myNet = getMyNetForExpense(exp);
+            ledgerEvents.map((event) => {
+              const impact = event.amountImpact;
               return (
-                <TouchableOpacity key={exp.id} style={styles.expRow} onPress={() => router.push({ pathname: '/(tabs)/expense-detail', params: { expenseId: exp.id } })}>
+                <TouchableOpacity
+                  key={event.id}
+                  style={styles.expRow}
+                  onPress={() => {
+                    if (event.kind === 'expense' && event.expenseId) {
+                      router.push({ pathname: '/(tabs)/expense-detail', params: { expenseId: event.expenseId } });
+                    }
+                  }}
+                >
                   <View>
-                    <Text style={styles.expTitle}>{exp.title}</Text>
-                    <Text style={styles.expDate}>{formatDate(exp.date)}</Text>
+                    <Text style={styles.expTitle}>{event.title}</Text>
+                    <Text style={styles.expDate}>{formatDate(event.date)}</Text>
+                    {event.note ? <Text style={styles.expDate}>{event.note}</Text> : null}
                   </View>
-                  <Text style={[styles.expAmount, { color: myNet >= 0 ? '#2E7D32' : '#D32F2F' }]}>{myNet >= 0 ? `₹${Math.abs(myNet).toFixed(2)} (Get)` : `₹${Math.abs(myNet).toFixed(2)} (Pay)`}</Text>
+                  <View style={{ alignItems: 'flex-end' }}>
+                    <Text style={[styles.expAmount, { color: impact >= 0 ? '#2E7D32' : '#D32F2F' }]}>
+                      {impact >= 0 ? `+₹${Math.abs(impact).toFixed(2)}` : `-₹${Math.abs(impact).toFixed(2)}`}
+                    </Text>
+                    <Text style={styles.expDate}>
+                      {event.runningBalance >= 0
+                        ? `Balance: Get ₹${Math.abs(event.runningBalance).toFixed(2)}`
+                        : `Balance: Pay ₹${Math.abs(event.runningBalance).toFixed(2)}`}
+                    </Text>
+                  </View>
                 </TouchableOpacity>
               );
             })

@@ -17,61 +17,88 @@ export const API_URL = configuredApiUrl
             ? `http://${hostFromExpo}:3000`
             : `http://${fallbackHost}:3000`;
 
-console.log('API config:', { API_URL, Platform: Platform.OS });
+let accessToken: string | null = null;
+let unauthorizedHandler: (() => void) | null = null;
+let unauthorizedNotified = false;
 
-// Helper function to normalize phone numbers by removing +91 prefix
+const notifyUnauthorized = () => {
+    if (unauthorizedNotified) return;
+    unauthorizedNotified = true;
+    unauthorizedHandler?.();
+};
+
 const normalizePhone = (phone: string): string => {
     if (!phone) return phone;
-    return phone.replace(/^\+91/, '').trim();
+    const cleaned = phone.trim().replace(/[^\d+]/g, '');
+    if (!cleaned) return '';
+    if (cleaned.startsWith('+')) {
+        return `+${cleaned.slice(1).replace(/\D/g, '')}`;
+    }
+    return cleaned.replace(/\D/g, '');
+};
+
+const withAuthHeaders = (headers: Record<string, string> = {}) => {
+    if (!accessToken) {
+        return headers;
+    }
+    return {
+        ...headers,
+        Authorization: `Bearer ${accessToken}`,
+    };
+};
+
+const parseError = async (response: Response, fallbackMessage: string) => {
+    try {
+        const errorData = await response.json();
+        if (typeof errorData?.message === 'string') {
+            return errorData.message;
+        }
+        if (Array.isArray(errorData?.message) && errorData.message.length > 0) {
+            return String(errorData.message[0]);
+        }
+    } catch {
+        // ignore parse failure
+    }
+    return fallbackMessage;
 };
 
 export const api = {
-    async login(email: string, password: string) {
-        console.log(`[API] Attempting login: ${email}`);
-        try {
-            const url = `${API_URL}/users?email=${email}&password=${password}`;
-            console.log(`[API] Fetching: ${url}`);
-            const response = await fetch(url);
-            console.log(`[API] Response status: ${response.status}`);
+    setAccessToken(token: string | null) {
+        if (token !== accessToken) {
+            unauthorizedNotified = false;
+        }
+        accessToken = token;
+    },
 
-            if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
-            }
+    setUnauthorizedHandler(handler: (() => void) | null) {
+        unauthorizedHandler = handler;
+    },
+
+    async login(email: string, password: string) {
+        try {
+            const response = await fetch(`${API_URL}/auth/login`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ email: email.trim().toLowerCase(), password }),
+            });
 
             const data = await response.json();
-            console.log(`[API] Data received:`, data);
-
-            if (data.length > 0) {
-                return { success: true, user: data[0] };
+            if (!response.ok) {
+                return { success: false, message: data?.message || 'Invalid email or password' };
             }
-            return { success: false, message: 'Invalid email or password' };
-        } catch (error) {
-            console.error('Login error:', error);
+
+            return { success: true, user: data.user, accessToken: data.accessToken };
+        } catch {
             return { success: false, message: 'Network error. Is the server running?' };
         }
     },
 
     async signup(name: string, email: string, password: string, mobile: string) {
         const normalizedMobile = normalizePhone(mobile);
-        console.log(`[API] Attempting signup: ${email}, mobile: ${normalizedMobile}`);
         try {
-            // Check if user with same email already exists
-            const checkUrl = `${API_URL}/users?email=${email}`;
-
-            console.log(`[API] Checking user: ${checkUrl}`);
-            const emailResponse = await fetch(checkUrl);
-            const emailData = await emailResponse.json();
-
-            // Only block if email already exists with a password (i.e., fully signed up user)
-            const existingUser = emailData.find((u: any) => u.password);
-            if (existingUser) {
-                return { success: false, message: 'Email already exists' };
-            }
-
-            // Create new user - backend will merge with invited user if exists
-            const createUrl = `${API_URL}/users`;
-            console.log(`[API] Creating user: ${createUrl}`);
-            const response = await fetch(createUrl, {
+            const response = await fetch(`${API_URL}/users`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -79,10 +106,14 @@ export const api = {
                 body: JSON.stringify({ name, email, password, mobile: normalizedMobile }),
             });
 
+            if (!response.ok) {
+                const message = await parseError(response, 'Failed to create account');
+                return { success: false, message };
+            }
+
             const user = await response.json();
             return { success: true, user };
-        } catch (error) {
-            console.error('Signup error:', error);
+        } catch {
             return { success: false, message: 'Network error. Is the server running?' };
         }
     },
@@ -90,302 +121,370 @@ export const api = {
     async checkMobile(mobile: string) {
         const normalizedMobile = normalizePhone(mobile);
         try {
-            const url = `${API_URL}/users?mobile=${normalizedMobile}`;
-            const response = await fetch(url);
+            const response = await fetch(`${API_URL}/users?mobile=${encodeURIComponent(normalizedMobile)}`);
             const dataRaw = await response.json();
-            // Manual filter with normalization
             const data = dataRaw.filter((u: any) => normalizePhone(u.mobile) === normalizedMobile);
             return { success: true, exists: data.length > 0, user: data[0] };
-        } catch (error) {
-            console.error('Check mobile error:', error);
+        } catch {
             return { success: false, message: 'Network error' };
         }
     },
 
     async verifyOtp(mobile: string, otp: string) {
-        console.log(`[API] Verifying OTP for ${mobile}`);
+        const normalizedMobile = normalizePhone(mobile);
         try {
-            const url = `${API_URL}/auth/verify-otp`;
-            console.log(`[API] URL: ${url}`);
-            const response = await fetch(url, {
+            const response = await fetch(`${API_URL}/auth/verify-otp`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                 },
-                body: JSON.stringify({ mobile, otp }),
+                body: JSON.stringify({ mobile: normalizedMobile, otp: otp.trim() }),
             });
 
-            const text = await response.text();
-            console.log(`[API] Raw response: "${text}"`);
-
-            if (!text) {
-                console.warn('[API] Empty response received from server');
-                return { success: false, message: 'Server returned empty response' };
+            if (!response.ok) {
+                const message = await parseError(response, 'Invalid OTP');
+                return { success: false, message };
             }
 
-            const data = JSON.parse(text);
-            console.log(`[API] Parsed data:`, data);
-
-            if (response.ok && data.success) {
-                return { success: true, user: data.user };
-            } else {
-                return { success: false, message: data.message || 'Invalid OTP' };
-            }
-        } catch (error) {
-            console.error('Verify OTP error:', error);
+            const data = await response.json();
+            return { success: true, user: data.user, accessToken: data.accessToken };
+        } catch {
             return { success: false, message: 'Network error' };
         }
     },
 
     async sendOtp(mobile: string) {
-        console.log(`[API] Sending OTP to ${mobile}`);
+        const normalizedMobile = normalizePhone(mobile);
         try {
-            const url = `${API_URL}/auth/send-otp`;
-            console.log(`[API] URL: ${url}`);
-            const response = await fetch(url, {
+            const response = await fetch(`${API_URL}/auth/send-otp`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                 },
-                body: JSON.stringify({ mobile }),
+                body: JSON.stringify({ mobile: normalizedMobile }),
             });
 
-            const text = await response.text();
-            console.log(`[API] Raw response: "${text}"`);
-
-            if (!text) {
-                console.warn('[API] Empty response received from server');
-                return { success: false, message: 'Server returned empty response' };
+            if (!response.ok) {
+                const message = await parseError(response, 'Failed to send OTP');
+                return { success: false, message };
             }
 
-            const data = JSON.parse(text);
-            console.log(`[API] Parsed data:`, data);
-
-            if (response.ok) {
-                return { success: true, message: data.message, otp: data.otp };
-            } else {
-                return { success: false, message: data.message || 'Failed to send OTP' };
-            }
-        } catch (error) {
-            console.error('Send OTP error:', error);
+            const data = await response.json();
+            return { success: true, message: data.message };
+        } catch {
             return { success: false, message: 'Network error' };
         }
     },
 
-    async addExpense(expense: any, createdBy: string) {
-        console.log(`[API] Adding expense:`, expense);
+    async addExpense(expense: any, _createdBy?: string) {
         try {
-            const url = `${API_URL}/expenses`;
-            const response = await fetch(url, {
+            const response = await fetch(`${API_URL}/expenses`, {
                 method: 'POST',
-                headers: {
+                headers: withAuthHeaders({
                     'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({ ...expense, createdBy }),
+                }),
+                body: JSON.stringify(expense),
             });
+            if (response.status === 401) {
+                notifyUnauthorized();
+                return { success: false, message: 'Session expired. Please sign in again.' };
+            }
 
             if (!response.ok) {
-                const error = await response.json();
-                throw new Error(error.message || 'Failed to add expense');
+                const message = await parseError(response, 'Failed to add expense');
+                throw new Error(message);
             }
 
             return { success: true, data: await response.json() };
         } catch (error: any) {
-            console.error('Add expense error:', error);
             return { success: false, message: error.message || 'Network error' };
         }
     },
 
-    async getExpenses(userId?: string, groupId?: string) {
+    async updateExpense(expenseId: string, updates: any) {
+        try {
+            const response = await fetch(`${API_URL}/expenses/${expenseId}`, {
+                method: 'PATCH',
+                headers: withAuthHeaders({
+                    'Content-Type': 'application/json',
+                }),
+                body: JSON.stringify(updates),
+            });
+            if (response.status === 401) {
+                notifyUnauthorized();
+                return { success: false, message: 'Session expired. Please sign in again.' };
+            }
+            if (!response.ok) {
+                throw new Error(await parseError(response, 'Failed to update expense'));
+            }
+            return { success: true, data: await response.json() };
+        } catch (error: any) {
+            return { success: false, message: error.message || 'Network error' };
+        }
+    },
+
+    async deleteExpense(expenseId: string) {
+        try {
+            const response = await fetch(`${API_URL}/expenses/${expenseId}`, {
+                method: 'DELETE',
+                headers: withAuthHeaders(),
+            });
+            if (response.status === 401) {
+                notifyUnauthorized();
+                return { success: false, message: 'Session expired. Please sign in again.' };
+            }
+            if (!response.ok) {
+                throw new Error(await parseError(response, 'Failed to delete expense'));
+            }
+            return { success: true, data: await response.json() };
+        } catch (error: any) {
+            return { success: false, message: error.message || 'Network error' };
+        }
+    },
+
+    async getExpenses(_userId?: string, groupId?: string) {
         try {
             const params = new URLSearchParams();
-            if (userId) params.set('userId', userId);
             if (groupId) params.set('groupId', groupId);
             const query = params.toString();
             const url = `${API_URL}/expenses${query ? `?${query}` : ''}`;
-            const response = await fetch(url);
+            const response = await fetch(url, {
+                headers: withAuthHeaders(),
+            });
+            if (response.status === 401) {
+                notifyUnauthorized();
+                return { success: false, message: 'Session expired. Please sign in again.' };
+            }
             if (!response.ok) {
                 throw new Error('Failed to fetch expenses');
             }
             return { success: true, data: await response.json() };
         } catch (error: any) {
-            console.error('Get expenses error:', error);
+            return { success: false, message: error.message || 'Network error' };
+        }
+    },
+
+    async getAnalyticsSummary(options?: { groupId?: string; timeFilter?: '30D' | '90D' | 'ALL' }) {
+        try {
+            const params = new URLSearchParams();
+            if (options?.groupId) params.set('groupId', options.groupId);
+            if (options?.timeFilter) params.set('timeFilter', options.timeFilter);
+            const query = params.toString();
+            const url = `${API_URL}/expenses/analytics/summary${query ? `?${query}` : ''}`;
+            const response = await fetch(url, {
+                headers: withAuthHeaders(),
+            });
+            if (response.status === 401) {
+                notifyUnauthorized();
+                return { success: false, message: 'Session expired. Please sign in again.' };
+            }
+            if (!response.ok) {
+                throw new Error(await parseError(response, 'Failed to fetch analytics'));
+            }
+            return { success: true, data: await response.json() };
+        } catch (error: any) {
+            return { success: false, message: error.message || 'Network error' };
+        }
+    },
+
+    async createSettlement(payload: { fromUserId: string; toUserId: string; amount: number; groupId?: string; settledAt?: string; note?: string }) {
+        try {
+            const response = await fetch(`${API_URL}/expenses/settlements`, {
+                method: 'POST',
+                headers: withAuthHeaders({
+                    'Content-Type': 'application/json',
+                }),
+                body: JSON.stringify(payload),
+            });
+            if (response.status === 401) {
+                notifyUnauthorized();
+                return { success: false, message: 'Session expired. Please sign in again.' };
+            }
+            if (!response.ok) {
+                throw new Error(await parseError(response, 'Failed to create settlement'));
+            }
+            return { success: true, data: await response.json() };
+        } catch (error: any) {
+            return { success: false, message: error.message || 'Network error' };
+        }
+    },
+
+    async getSettlements(groupId?: string) {
+        try {
+            const params = new URLSearchParams();
+            if (groupId) params.set('groupId', groupId);
+            const query = params.toString();
+            const response = await fetch(`${API_URL}/expenses/settlements${query ? `?${query}` : ''}`, {
+                headers: withAuthHeaders(),
+            });
+            if (response.status === 401) {
+                notifyUnauthorized();
+                return { success: false, message: 'Session expired. Please sign in again.' };
+            }
+            if (!response.ok) {
+                throw new Error(await parseError(response, 'Failed to fetch settlements'));
+            }
+            return { success: true, data: await response.json() };
+        } catch (error: any) {
             return { success: false, message: error.message || 'Network error' };
         }
     },
 
     async getUsers() {
         try {
-            const url = `${API_URL}/users`;
-            const response = await fetch(url);
+            const response = await fetch(`${API_URL}/users`, {
+                headers: withAuthHeaders(),
+            });
+            if (response.status === 401) {
+                notifyUnauthorized();
+                return { success: false, message: 'Session expired. Please sign in again.' };
+            }
             if (!response.ok) {
                 throw new Error('Failed to fetch users');
             }
             return { success: true, data: await response.json() };
         } catch (error: any) {
-            console.error('Get users error:', error);
             return { success: false, message: error.message || 'Network error' };
         }
     },
+
     async updateUser(userId: string, updates: { name?: string; email?: string; mobile?: string; avatar?: string }) {
         const normalizedMobile = updates.mobile !== undefined ? normalizePhone(updates.mobile) : undefined;
         try {
-            const url = `${API_URL}/users/${userId}`;
-            const response = await fetch(url, {
+            const response = await fetch(`${API_URL}/users/${userId}`, {
                 method: 'PATCH',
-                headers: {
+                headers: withAuthHeaders({
                     'Content-Type': 'application/json',
-                },
+                }),
                 body: JSON.stringify({
                     ...updates,
                     ...(updates.mobile !== undefined ? { mobile: normalizedMobile } : {}),
                 }),
             });
+            if (response.status === 401) {
+                notifyUnauthorized();
+                return { success: false, message: 'Session expired. Please sign in again.' };
+            }
             if (!response.ok) {
-                let errorMessage = 'Failed to update profile';
-                try {
-                    const errorData = await response.json();
-                    if (typeof errorData?.message === 'string') {
-                        errorMessage = errorData.message;
-                    } else if (Array.isArray(errorData?.message) && errorData.message.length > 0) {
-                        errorMessage = String(errorData.message[0]);
-                    }
-                } catch {
-                    // Ignore JSON parse errors and use fallback message.
-                }
-                throw new Error(errorMessage);
+                throw new Error(await parseError(response, 'Failed to update profile'));
             }
             return { success: true, data: await response.json() };
         } catch (error: any) {
-            console.error('Update user error:', error);
             return { success: false, message: error.message || 'Network error' };
         }
     },
+
     async inviteUser(userData: { name: string; mobile?: string }) {
         const normalizedMobile = userData.mobile ? normalizePhone(userData.mobile) : undefined;
         try {
-            const url = `${API_URL}/users/invite`;
-            const response = await fetch(url, {
+            const response = await fetch(`${API_URL}/users/invite`, {
                 method: 'POST',
-                headers: {
+                headers: withAuthHeaders({
                     'Content-Type': 'application/json',
-                },
+                }),
                 body: JSON.stringify({
                     name: userData.name,
                     mobile: normalizedMobile,
                 }),
             });
+            if (response.status === 401) {
+                notifyUnauthorized();
+                return { success: false, message: 'Session expired. Please sign in again.' };
+            }
             if (!response.ok) {
                 throw new Error('Failed to invite user');
             }
             return { success: true, data: await response.json() };
         } catch (error: any) {
-            console.error('Invite user error:', error);
             return { success: false, message: error.message || 'Network error' };
         }
     },
-    async createGroup(groupData: { name: string; createdBy: string; members: string[]; invitedUsers?: Array<{ name: string; mobile?: string }> }) {
+
+    async createGroup(groupData: { name: string; createdBy?: string; members: string[]; invitedUsers?: Array<{ name: string; mobile?: string }> }) {
         try {
-            const url = `${API_URL}/groups`;
-            const response = await fetch(url, {
+            const { createdBy, ...payload } = groupData;
+            const response = await fetch(`${API_URL}/groups`, {
                 method: 'POST',
-                headers: {
+                headers: withAuthHeaders({
                     'Content-Type': 'application/json',
-                },
-                body: JSON.stringify(groupData),
+                }),
+                body: JSON.stringify(payload),
             });
+            if (response.status === 401) {
+                notifyUnauthorized();
+                return { success: false, message: 'Session expired. Please sign in again.' };
+            }
 
             if (!response.ok) {
-                let errorMessage = 'Failed to create group';
-                try {
-                    const errorData = await response.json();
-                    if (typeof errorData?.message === 'string') {
-                        errorMessage = errorData.message;
-                    } else if (Array.isArray(errorData?.message) && errorData.message.length > 0) {
-                        errorMessage = String(errorData.message[0]);
-                    }
-                } catch {
-                    // Ignore JSON parse errors and use fallback message.
-                }
-                throw new Error(errorMessage);
+                throw new Error(await parseError(response, 'Failed to create group'));
             }
 
             return { success: true, data: await response.json() };
         } catch (error: any) {
-            console.error('Create group error:', error);
             return { success: false, message: error.message || 'Network error' };
         }
     },
-    async getGroups(userId?: string) {
+
+    async getGroups(_userId?: string) {
         try {
-            const url = userId ? `${API_URL}/groups?userId=${userId}` : `${API_URL}/groups`;
-            const response = await fetch(url);
+            const response = await fetch(`${API_URL}/groups`, {
+                headers: withAuthHeaders(),
+            });
+            if (response.status === 401) {
+                notifyUnauthorized();
+                return { success: false, message: 'Session expired. Please sign in again.' };
+            }
             if (!response.ok) {
                 throw new Error('Failed to fetch groups');
             }
             return { success: true, data: await response.json() };
         } catch (error: any) {
-            console.error('Get groups error:', error);
             return { success: false, message: error.message || 'Network error' };
         }
     },
+
     async updateGroup(
         groupId: string,
         groupData: { name?: string; members?: string[]; invitedUsers?: Array<{ name: string; mobile?: string }> },
-        userId?: string,
+        _userId?: string,
     ) {
         try {
-            const query = userId ? `?userId=${encodeURIComponent(userId)}` : '';
-            const url = `${API_URL}/groups/${groupId}${query}`;
-            const response = await fetch(url, {
+            const response = await fetch(`${API_URL}/groups/${groupId}`, {
                 method: 'PATCH',
-                headers: {
+                headers: withAuthHeaders({
                     'Content-Type': 'application/json',
-                },
+                }),
                 body: JSON.stringify(groupData),
             });
+            if (response.status === 401) {
+                notifyUnauthorized();
+                return { success: false, message: 'Session expired. Please sign in again.' };
+            }
             if (!response.ok) {
-                let errorMessage = 'Failed to update group';
-                try {
-                    const errorData = await response.json();
-                    if (typeof errorData?.message === 'string') {
-                        errorMessage = errorData.message;
-                    } else if (Array.isArray(errorData?.message) && errorData.message.length > 0) {
-                        errorMessage = String(errorData.message[0]);
-                    }
-                } catch {
-                    // Ignore JSON parse errors and use fallback message.
-                }
-                throw new Error(errorMessage);
+                throw new Error(await parseError(response, 'Failed to update group'));
             }
             return { success: true, data: await response.json() };
         } catch (error: any) {
-            console.error('Update group error:', error);
             return { success: false, message: error.message || 'Network error' };
         }
     },
-    async deleteGroup(groupId: string, userId?: string) {
+
+    async deleteGroup(groupId: string, _userId?: string) {
         try {
-            const query = userId ? `?userId=${encodeURIComponent(userId)}` : '';
-            const url = `${API_URL}/groups/${groupId}${query}`;
-            const response = await fetch(url, { method: 'DELETE' });
+            const response = await fetch(`${API_URL}/groups/${groupId}`, {
+                method: 'DELETE',
+                headers: withAuthHeaders(),
+            });
+            if (response.status === 401) {
+                notifyUnauthorized();
+                return { success: false, message: 'Session expired. Please sign in again.' };
+            }
             if (!response.ok) {
-                let errorMessage = 'Failed to delete group';
-                try {
-                    const errorData = await response.json();
-                    if (typeof errorData?.message === 'string') {
-                        errorMessage = errorData.message;
-                    }
-                } catch {
-                    // Ignore JSON parse errors and use fallback message.
-                }
-                throw new Error(errorMessage);
+                throw new Error(await parseError(response, 'Failed to delete group'));
             }
             return { success: true, data: await response.json() };
         } catch (error: any) {
-            console.error('Delete group error:', error);
             return { success: false, message: error.message || 'Network error' };
         }
-    }
-
+    },
 };
